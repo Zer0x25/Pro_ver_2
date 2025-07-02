@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { sequelize } from './models/index.js';
 import authRoutes from './routes/auth.js';
 import syncRoutes from './routes/sync.js';
+import bootstrapRoutes from './routes/bootstrap.js';
 
 dotenv.config();
 
@@ -17,16 +18,17 @@ app.use(express.json());
 // --- Rutas API ---
 app.use('/api/login', authRoutes);
 app.use('/api', syncRoutes);
+app.use('/api', bootstrapRoutes);
 
 // --- Servir frontend desde Dist ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const distPath = path.join(__dirname, '../dist');
+const distPath = path.join(__dirname, '../Frontend/dist');
 
 app.use(express.static(distPath));
 
 // SPA fallback: sirve index.html en rutas no API
-app.get('*', (req, res) => {
+app.get(/^\/(?!api).*/, (req, res) => {
   res.sendFile(path.join(distPath, 'index.html'));
 });
 

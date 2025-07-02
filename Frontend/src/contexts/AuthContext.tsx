@@ -61,42 +61,40 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, []);
 
   const login = async (username: string, pass: string): Promise<boolean> => {
-    let potentialUser: User | undefined = undefined;
-
-    if (userContext && !userContext.isLoadingUsers) {
-      potentialUser = userContext.users.find(u => u.username === username);
-    }
-    
-    if (potentialUser && potentialUser.password === pass) {
-      setCurrentUser(potentialUser);
-      setIsAuthenticated(true);
-      sessionStorage.setItem('currentUser', JSON.stringify(potentialUser)); 
-      await addLog(username, 'User Login Success (DB)', { role: potentialUser.role });
-      navigate(ROUTES.DASHBOARD);
-      return true;
-    }
-
-    if (username === 'admin' && pass === 'password') {
-      const adminUser: User = { 
-        id: 'admin-special-001', 
-        username: 'admin', 
-        role: 'Administrador',
+    try {
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password: pass })
+      });
+      if (!response.ok) {
+        await addLog(username, 'User Login Failed - Invalid Credentials (API)');
+        return false;
+      }
+      const data = await response.json();
+      const token = data.token;
+      // Decodificar el JWT para extraer info del usuario (opcional, si no viene en la respuesta)
+      // Aquí asumimos que el backend retorna el rol y username en el token
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      const user: User = {
+        id: payload.userId,
+        username: payload.username,
+        role: payload.role,
         lastModified: Date.now(),
         syncStatus: 'synced',
         isDeleted: false,
       };
-      const adminUserForState = { ...adminUser, password: undefined }; 
-      setCurrentUser(adminUserForState);
+      setCurrentUser(user);
       setIsAuthenticated(true);
-      sessionStorage.setItem('currentUser', JSON.stringify(adminUserForState)); 
-      await addLog(username, 'User Login Success (Hardcoded Admin)');
+      sessionStorage.setItem('currentUser', JSON.stringify(user));
+      sessionStorage.setItem('authToken', token);
+      await addLog(username, 'User Login Success (API)', { role: user.role });
       navigate(ROUTES.DASHBOARD);
       return true;
+    } catch (error) {
+      await addLog(username, 'User Login Failed - Network/API Error');
+      return false;
     }
-
-    await new Promise(resolve => setTimeout(resolve, 300)); 
-    await addLog(username, 'User Login Failed - Invalid Credentials');
-    return false;
   };
 
   const logout = () => {

@@ -72,8 +72,6 @@ export const SyncProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           auditLogs: auditLogs
       };
 
-      console.log("SYNC: Payload to be sent to backend:", JSON.stringify(payload, null, 2));
-      
       if (changeCount === 0 && auditLogs.length === 0) {
           addToast("Los datos ya están actualizados.", 'success');
           setSyncState('success');
@@ -81,99 +79,88 @@ export const SyncProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           return;
       }
 
-      await new Promise(resolve => setTimeout(resolve, 1500));
-
-      const mockErrors: any[] = [];
-      const mockConflicts: any[] = [];
-      Object.values(payload.changes).flat().forEach((item: any) => {
-        if ((item.name || item.username)?.toLowerCase().includes('error')) {
-          mockErrors.push({ clientRecordId: item.id, message: 'Error de validación forzado para pruebas.' });
-        }
-        if ((item.name || item.username)?.toLowerCase().includes('conflict')) {
-          mockConflicts.push({ clientRecordId: item.id, message: `Conflicto resuelto para ${item.name || item.username}.` });
-        }
+      // --- Llamada real al backend ---
+      const token = sessionStorage.getItem('authToken');
+      const response = await fetch('/api/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
       });
-
-      const mockResponse = {
-        newSyncTimestamp: Date.now(),
-        updates: {},
-        conflicts: mockConflicts,
-        errors: mockErrors,
-      };
-      
-      console.log("SYNC: Mock response from backend:", JSON.stringify(mockResponse, null, 2));
-      setConflicts(mockResponse.conflicts);
+      if (!response.ok) {
+        addToast("Error de red o autenticación al sincronizar.", "error");
+        setSyncState('error');
+        return;
+      }
+      const syncResult = await response.json();
+      setConflicts(syncResult.conflicts || []);
 
       const tx = db.transaction([...SYNCABLE_STORES, STORES.AUDIT_LOGS], 'readwrite');
-      
-      for (const storeName of Object.keys(payload.changes)) {
-          for (const item of payload.changes[storeName]) {
-            if (!mockResponse.errors.some((e: any) => e.clientRecordId === item.id)) {
-                const store = tx.objectStore(storeName);
-                item.syncStatus = 'synced';
-                item.syncError = undefined; // Clear previous errors
-                store.put(item);
-            }
-          }
-      }
-      
-      const auditLogStore = tx.objectStore(STORES.AUDIT_LOGS);
-      for (const log of auditLogs) {
-        if (!mockResponse.errors.some((e: any) => e.clientRecordId === log.id)) {
-            log.syncStatus = 'synced';
-            log.syncError = undefined;
-            auditLogStore.put(log);
+      // Procesar updates del backend
+      for (const storeName of Object.keys(syncResult.updates || {})) {
+        const store = tx.objectStore(storeName);
+        for (const item of syncResult.updates[storeName]) {
+          store.put(item);
         }
       }
-
-      for (const error of mockResponse.errors as any[]) {
-          let found = false;
-          for (const storeName of SYNCABLE_STORES) {
-              const store = tx.objectStore(storeName);
-              const item = await store.get(error.clientRecordId);
-              if (item) {
-                  item.syncStatus = 'error';
-                  item.syncError = error.message;
-                  store.put(item);
-                  addToast(`Error al sincronizar ${(item as any).name || `ID: ${item.id}`}: ${error.message}`, 'error', 7000);
-                  found = true;
-                  break; 
-              }
+      // Marcar como 'synced' los enviados exitosamente
+      for (const storeName of Object.keys(payload.changes)) {
+        for (const item of payload.changes[storeName]) {
+          if (!syncResult.errors?.some((e: any) => e.clientRecordId === item.id)) {
+            const store = tx.objectStore(storeName);
+            item.syncStatus = 'synced';
+            item.syncError = undefined;
+            store.put(item);
           }
-           if (!found) console.warn(`SYNC: Could not find item with ID ${error.clientRecordId} to mark as error.`);
+        }
       }
-
-      for (const conflict of mockResponse.conflicts as any[]) {
-          addToast(conflict.message, 'info', 7000);
+      // Marcar logs de auditoría como 'synced'
+      const auditLogStore = tx.objectStore(STORES.AUDIT_LOGS);
+      for (const log of auditLogs) {
+        if (!syncResult.errors?.some((e: any) => e.clientRecordId === log.id)) {
+          log.syncStatus = 'synced';
+          log.syncError = undefined;
+          auditLogStore.put(log);
+        }
       }
-      
-      for (const storeName of Object.keys(mockResponse.updates)) {
+      // Procesar errores
+      for (const error of syncResult.errors || []) {
+        let found = false;
+        for (const storeName of SYNCABLE_STORES) {
           const store = tx.objectStore(storeName);
-          for (const item of (mockResponse.updates as any)[storeName]) {
-              store.put(item);
+          const item = await store.get(error.clientRecordId);
+          if (item) {
+            item.syncStatus = 'error';
+            item.syncError = error.message;
+            store.put(item);
+            addToast(`Error al sincronizar ${(item as any).name || `ID: ${item.id}`}: ${error.message}`, 'error', 7000);
+            found = true;
+            break;
           }
+        }
+        if (!found) console.warn(`SYNC: Could not find item with ID ${error.clientRecordId} to mark as error.`);
       }
-
+      // Notificar conflictos
+      for (const conflict of syncResult.conflicts || []) {
+        addToast(conflict.message, 'info', 7000);
+      }
       await tx.done;
-
-      localStorage.setItem(COUNTER_IDS.LAST_SYNC_TIMESTAMP, String(mockResponse.newSyncTimestamp));
-      setLastSyncTime(mockResponse.newSyncTimestamp);
-      
-      const hasErrors = mockResponse.errors.length > 0;
+      localStorage.setItem(COUNTER_IDS.LAST_SYNC_TIMESTAMP, String(syncResult.newSyncTimestamp));
+      setLastSyncTime(syncResult.newSyncTimestamp);
+      const hasErrors = (syncResult.errors || []).length > 0;
       if (hasErrors) {
-          addToast("Sincronización completada con errores.", "warning");
-          setSyncState('error');
+        addToast("Sincronización completada con errores.", "warning");
+        setSyncState('error');
       } else {
-          addToast("Sincronización completada.", 'success');
-          setSyncState('success');
+        addToast("Sincronización completada.", 'success');
+        setSyncState('success');
       }
-      
-      await addLog(currentUser.username, 'Sync Completed', { changesSent: changeCount + auditLogs.length, errors: mockResponse.errors.length, conflicts: mockResponse.conflicts.length });
-
+      await addLog(currentUser.username, 'Sync Completed', { changesSent: changeCount + auditLogs.length, errors: (syncResult.errors || []).length, conflicts: (syncResult.conflicts || []).length });
       if (!hasErrors) {
-          setTimeout(() => setSyncState('idle'), 3000);
+        setTimeout(() => setSyncState('idle'), 3000);
       }
-
     } catch (error) {
       console.error("SYNC: An error occurred during synchronization:", error);
       addToast("Ocurrió un error inesperado durante la sincronización.", "error");
@@ -208,8 +195,42 @@ export const SyncProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   }, [addToast, runSync]);
   
   const runBootstrap = useCallback(async () => {
-      console.log("SYNC: Running bootstrap...");
-      addToast("Función de Bootstrap no implementada.", "info");
+    try {
+      const token = sessionStorage.getItem('authToken');
+      if (!token) {
+        addToast('No autenticado. Inicie sesión primero.', 'error');
+        return;
+      }
+      const response = await fetch('/api/bootstrap', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (!response.ok) {
+        addToast('Error al obtener datos iniciales del servidor.', 'error');
+        return;
+      }
+      const data = await response.json();
+      const db = await getDBInstance();
+      const tx = db.transaction([...SYNCABLE_STORES, STORES.AUDIT_LOGS], 'readwrite');
+      // Solo poblar stores que existen en IndexedDB (usando contains correctamente)
+      for (const storeName of Object.keys(data.data)) {
+        if (!db.objectStoreNames.contains(storeName)) continue;
+        const store = tx.objectStore(storeName);
+        await store.clear();
+        for (const item of data.data[storeName]) {
+          store.put(item);
+        }
+      }
+      await tx.done;
+      localStorage.setItem(COUNTER_IDS.LAST_SYNC_TIMESTAMP, String(data.newSyncTimestamp));
+      setLastSyncTime(data.newSyncTimestamp);
+      addToast('Datos iniciales cargados correctamente.', 'success');
+    } catch (error) {
+      console.error('BOOTSTRAP: Error al poblar datos iniciales:', error);
+      addToast('Error inesperado durante el bootstrap.', 'error');
+    }
   }, [addToast]);
 
   return (

@@ -6,6 +6,7 @@ import Input from '../ui/Input';
 import Card from '../ui/Card';
 import { APP_TITLE, ROUTES } from '../../constants';
 import { useNavigate } from 'react-router-dom';
+import { useSync } from '../../hooks/useSync';
 
 const LoginPage: React.FC = () => {
   const [username, setUsername] = useState('');
@@ -14,6 +15,7 @@ const LoginPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const { login, isAuthenticated, isAuthLoading } = useAuth(); 
   const { addToast } = useToasts();
+  const { runBootstrap } = useSync();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -33,7 +35,8 @@ const LoginPage: React.FC = () => {
       setError(errorMessage); 
       addToast(errorMessage, 'error');
     } else {
-      // Success toast can be omitted here if login function or navigation implies success
+      await runBootstrap();
+      // Success toast can be omitido aquí si login function o navigation implica éxito
       // addToast(`Bienvenido ${username}!`, 'success'); 
     }
     setLoading(false);
