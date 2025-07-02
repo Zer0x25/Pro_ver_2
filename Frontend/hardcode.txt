@@ -1,0 +1,84 @@
+# Guía de Procesos Simulados para el Equipo de Backend
+
+## 1. Objetivo del Documento
+
+Este documento detalla todos los procesos y lógicas que actualmente están simulados ("hardcoded") en la aplicación frontend. El propósito es servir como una guía técnica para que el equipo de backend pueda implementar la funcionalidad real del servidor, asegurando que la integración sea fluida y consistente con el comportamiento actual de la aplicación.
+
+---
+
+## 2. Procesos Simulados (Endpoints de API Falsos)
+
+La comunicación con el backend está actualmente simulada dentro del frontend. A continuación se describen los endpoints que el backend debe implementar.
+
+### 2.1. Autenticación (`POST /api/login`)
+
+-   **Comportamiento Actual (Frontend):**
+    -   La función `login` en `AuthContext.tsx` verifica las credenciales contra:
+        1.  Una lista de usuarios almacenada en IndexedDB.
+        2.  Un usuario administrador codificado: `admin` / `password`.
+    -   Si las credenciales son válidas, se guarda la información del usuario en `sessionStorage` y se navega al dashboard. No se genera un token JWT real.
+
+-   **Requerimiento para Backend:**
+    -   Implementar el endpoint `POST /api/login`.
+    -   Debe recibir `{ "username": "...", "password": "..." }`.
+    -   Debe validar las credenciales contra la base de datos del servidor.
+    -   En caso de éxito, debe devolver una respuesta JSON con un token de autenticación (ej. JWT): `{ "token": "your_jwt_token_string" }`.
+
+### 2.2. Carga Inicial de Datos (`GET /api/bootstrap`)
+
+-   **Comportamiento Actual (Frontend):**
+    -   Este proceso está conceptualizado en `info.txt` pero **no está implementado**. El cliente actualmente carga todos los datos directamente desde IndexedDB al iniciar.
+    -   La función `runBootstrap` en `SyncContext.tsx` es un placeholder.
+
+-   **Requerimiento para Backend:**
+    -   Implementar el endpoint `GET /api/bootstrap` que requiera autenticación por token.
+    -   Debe devolver el conjunto completo de datos necesarios para que un nuevo dispositivo cliente funcione. La data debe estar filtrada según los permisos del rol del usuario que realiza la petición.
+    -   El formato de la respuesta debe ser el especificado en `info.txt`.
+
+### 2.3. Sincronización de Cambios (`POST /api/sync`)
+
+-   **Comportamiento Actual (Frontend):**
+    -   Este es el proceso simulado más complejo y se encuentra en la función `runSync` dentro de `SyncContext.tsx`.
+    -   **Envío de Datos:** El cliente recopila todos los registros con `syncStatus: 'pending'` de todas las tablas sincronizables y los logs de auditoría, y los empaqueta en un payload JSON (ver formato en `info.txt`).
+    -   **Simulación de Red:** Se utiliza un `setTimeout` para simular la latencia de la red.
+    -   **Simulación de Respuesta del Backend:**
+        -   **No se realiza una llamada `fetch` real.**
+        -   Se genera una **respuesta falsa** (`mockResponse`) dentro de la misma función.
+        -   **Errores y Conflictos Simulados:** La simulación revisa los nombres de los registros enviados. Si un `name` o `username` contiene la palabra `"error"`, se añade al array `errors` de la respuesta simulada. Si contiene `"conflict"`, se añade al array `conflicts`. **Esto es crucial para que el backend pueda probar el manejo de errores del frontend.**
+        -   **Actualizaciones desde el Servidor:** La respuesta simulada siempre devuelve un objeto `updates` vacío. No simula recibir cambios de otros usuarios.
+    -   **Procesamiento de la Respuesta:** El cliente procesa esta respuesta simulada, marcando los registros como `'synced'` o `'error'`, y mostrando notificaciones al usuario.
+
+-   **Requerimiento para Backend:**
+    -   Implementar el endpoint real `POST /api/sync` que requiera autenticación.
+    -   Debe procesar el payload de `changes` y `auditLogs` del cliente.
+    -   Debe realizar validaciones de negocio. Para registros inválidos, debe devolverlos en el array `errors` con un mensaje claro.
+    -   Debe implementar la lógica de resolución de conflictos "el último guardado gana" (basado en `lastModified`) y notificar los conflictos resueltos en el array `conflicts`.
+    -   Debe consultar su base de datos para encontrar todos los registros que han sido modificados por otros usuarios desde el `lastSyncTimestamp` que envió el cliente, y devolverlos en el objeto `updates`.
+    -   Debe devolver un `newSyncTimestamp` actualizado.
+
+---
+
+## 3. Generación de IDs (Lado del Cliente)
+
+-   **Comportamiento Actual (Frontend):**
+    -   **UUIDs:** Para la mayoría de las entidades (usuarios, patrones, asignaciones, etc.), el cliente genera IDs únicos usando `crypto.randomUUID()`.
+    -   **Contadores Secuenciales:** Para los empleados (`EMP001`, `EMP002`, ...) y los folios del libro de novedades, el cliente utiliza un contador local almacenado en la tabla `appSettings` de IndexedDB.
+
+-   **Requerimiento para Backend:**
+    -   El backend debe estar preparado para recibir y almacenar los IDs generados por el cliente, tratándolos como claves primarias.
+    -   Se debe discutir si el backend mantendrá estos IDs o si los reemplazará con su propia secuencia. La implementación actual del cliente asume que los IDs son persistentes.
+
+---
+
+## 4. Lógica de Negocio Automática (Lado del Cliente)
+
+Varias reglas de negocio se ejecutan automáticamente en el cliente. El backend debe estar al tanto de ellas, ya que el resultado de estas acciones se enviará a través del endpoint de sincronización.
+
+-   **Automatización de "Reloj Control" (`DashboardPage.tsx`):** Al iniciar sesión, un usuario con el cargo "Reloj Control" puede tener su marcaje de entrada y el inicio de turno en el libro de novedades realizados automáticamente.
+-   **Marcaje Automático al Iniciar Turno (`LogbookPage.tsx`):** Si un usuario inicia un turno manualmente y cumple las condiciones (estar en horario, no tener entrada abierta), su marcaje de entrada se registra automáticamente.
+-   **Novedades de Inicio/Cierre de Turno (`LogbookPage.tsx`):** Se añaden automáticamente entradas de texto ("Inicio de Turno...", "Cierre de Turno...") a la bitácora.
+-   **Novedades por Atraso/Ausencia (`DashboardPage.tsx`):** El panel de "Próximos a Entrar" genera automáticamente novedades en la bitácora cuando detecta atrasos significativos (+15 min) o ausencias (+60 min).
+-   **Cierre de Turno Automático (`TimeControlPage.tsx` -> `LogbookPage.tsx`):** Si el responsable de un turno activo marca su salida, se desencadena el proceso completo de cierre de turno automáticamente.
+
+-   **Requerimiento para Backend:**
+    -   El backend no necesita replicar esta lógica si se decide que permanecerá en el cliente. Sin embargo, debe estar preparado para recibir los registros creados por estas automatizaciones (nuevos `DailyTimeRecord`, `ShiftReport` actualizados, etc.) a través del `/api/sync` como cualquier otro cambio pendiente.

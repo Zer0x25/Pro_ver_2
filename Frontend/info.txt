@@ -1,0 +1,178 @@
+# Documentación de Sincronización y Estructura de Datos (Frontend/Backend)
+
+**Última actualización:** Con base en la reunión técnica y las decisiones acordadas.
+
+## 0. Propósito de este Documento
+
+Este archivo es la **especificación técnica fundamental** para la comunicación entre el frontend y el backend. Define:
+1.  El modelo de datos y los campos necesarios para la sincronización.
+2.  La firma y comportamiento esperado de los endpoints de la API.
+
+**Documentos Relacionados:**
+-   `reglaslogin.txt`: Describe las **reglas de negocio y automatizaciones** que se ejecutan en la aplicación. Es útil para entender el contexto de las operaciones.
+-   `hardcode.txt`: Detalla el **estado actual de la simulación** en el frontend y sirve como guía para la implementación de los endpoints aquí especificados.
+
+---
+
+## 1. Introducción
+
+Este documento define la arquitectura para la sincronización de datos entre la aplicación cliente (que utiliza IndexedDB como base de datos local y caché) y el servidor backend. El objetivo es mantener la consistencia de los datos, permitir un funcionamiento robusto en modo offline y resolver conflictos de manera predecible.
+
+**Flujo General:**
+1.  **Funcionamiento Offline:** La aplicación cliente siempre lee y escribe directamente en su base de datos local (IndexedDB). Esto garantiza una respuesta instantánea y una funcionalidad completa sin conexión a internet.
+2.  **Sincronización:** Cuando se detecta una conexión a internet y un usuario está autenticado, un proceso en segundo plano se encarga de:
+    - Enviar los cambios locales (creaciones, actualizaciones, eliminaciones) al servidor.
+    - Recibir los cambios ocurridos en el servidor desde la última sincronización.
+
+---
+
+## 2. Estrategia de Sincronización: Campos Adicionales Cruciales
+
+Para gestionar la sincronización, es crucial añadir los siguientes campos a **todas las tablas principales** que necesiten sincronizarse.
+
+-   `lastModified`: `BIGINT` / `TIMESTAMP` con milisegundos - **NOT NULL**.
+    -   Representa la fecha y hora de la última modificación del registro, en formato de timestamp Unix (milisegundos, UTC).
+    -   Este campo es el **pilar** para la resolución de conflictos. **La regla general es: "el registro con el timestamp más reciente gana"**.
+    -   Debe actualizarse en cada operación de creación (`CREATE`) o actualización (`UPDATE`).
+
+-   `isDeleted`: `BOOLEAN` - **NOT NULL**, DEFAULT `false`.
+    -   Implementa el borrado suave (*soft delete*).
+    -   Cuando un usuario elimina un registro, el cliente establece este campo en `true`. Los registros con `isDeleted: true` no se muestran en la UI y están pendientes de ser eliminados en el servidor.
+    -   El servidor, al recibir un registro con `isDeleted: true`, aplicará su propia lógica de borrado suave.
+
+-   `syncStatus`: `ENUM('synced', 'pending', 'error')` - **NOT NULL**, DEFAULT `'pending'`.
+    -   `synced`: El registro en el cliente está sincronizado con el servidor.
+    -   `pending`: El registro ha sido modificado localmente (`CREATE`, `UPDATE`, `DELETE`) y necesita ser enviado al servidor.
+    -   `error`: Hubo un error al intentar sincronizar este registro (ej. por una validación fallida en el backend). El cliente no reintentará automáticamente.
+
+-   `syncError`: `TEXT` / `VARCHAR(255)` - **NULLABLE**, DEFAULT `NULL`.
+    -   Almacena el mensaje de error legible por humanos devuelto por el servidor cuando un registro es rechazado.
+    -   Este campo se completa en el cliente solo cuando `syncStatus` se establece en `'error'`.
+    -   Permite a la UI mostrar al usuario la razón exacta del fallo, facilitando la corrección manual de los datos.
+
+---
+
+## 3. Diseño de la API de Sincronización
+
+Se proponen dos endpoints principales para la gestión de datos.
+
+### 3.1. Autenticación: `POST /api/login`
+-   **Request Body:** `{ "username": "...", "password": "..." }`
+-   **Response Body (Success):** `{ "token": "jwt.token.string" }`
+-   **Descripción:** El cliente envía credenciales y recibe un Token JWT, que se usará para autenticar las siguientes peticiones.
+
+### 3.2. Carga Inicial de Datos: `GET /api/bootstrap`
+-   **Autenticación:** Requiere un `Authorization: Bearer <token>` header.
+-   **Descripción:** Se llama en un dispositivo nuevo tras el login. Devuelve todos los datos necesarios para que el cliente comience a operar, **filtrados según los permisos del rol del usuario que realiza la petición**.
+-   **Response Body:**
+    ```json
+    {
+      "newSyncTimestamp": 1678887000000,
+      "data": {
+        "employees": [...],
+        "users": [...],
+        "daily_time_records": [...],
+        "theoretical_shift_patterns": [...],
+        "assigned_shifts": [...],
+        "app_settings": [...]
+      }
+    }
+    ```
+    -   El cliente poblará masivamente su IndexedDB y guardará el `newSyncTimestamp` para iniciar el ciclo de sincronización normal.
+
+### 3.3. Sincronización de Cambios: `POST /api/sync`
+-   **Autenticación:** Requiere un `Authorization: Bearer <token>` header.
+-   **Descripción:** Endpoint principal para la sincronización de deltas.
+
+#### 3.3.1. Request Body (Payload del Cliente al Servidor)
+
+```json
+{
+  "lastSyncTimestamp": 1678886400000,
+  "changes": {
+    "employees": [
+      { "id": "uuid-emp-001", "name": "Juan Pérez Modificado", "isDeleted": false, "lastModified": 1678886500000, "syncStatus": "pending" }
+    ],
+    "users": [
+       { "id": "uuid-usr-002", "role": "Supervisor", "isDeleted": true, "lastModified": 1678886700000, "syncStatus": "pending" }
+    ]
+  },
+  "auditLogs": [ 
+      { "id": "uuid-log-1", "timestamp": "...", "actorUsername": "...", "action": "...", "details": {} }
+  ]
+}
+```
+
+-   `lastSyncTimestamp`: `BIGINT`. El timestamp de la última sincronización exitosa (será `0` en la primera sincronización tras el bootstrap).
+-   `changes`: `Object`. Contiene arrays de registros con `syncStatus: 'pending'`, incluyendo creaciones, actualizaciones y borrados suaves.
+-   `auditLogs`: `Array` (opcional). Contiene los logs de auditoría que son de solo escritura hacia el servidor y no necesitan sincronizarse de vuelta.
+
+#### 3.3.2. Response Body (Respuesta del Servidor al Cliente)
+
+```json
+{
+  "newSyncTimestamp": 1678887000000,
+  "updates": {
+    "employees": [
+      { "id": "uuid-emp-003", "name": "Nuevo Empleado desde Servidor", "isDeleted": false, "lastModified": 1678886900000, "syncStatus": "synced" }
+    ]
+  },
+  "conflicts": [
+    { "clientRecordId": "uuid-emp-001", "message": "Registro actualizado con la versión del servidor, que era más reciente." }
+  ],
+  "errors": [
+    { "clientRecordId": "uuid-rec-123", "message": "La relación 'employeeId' es inválida." }
+  ]
+}
+```
+
+-   `newSyncTimestamp`: `BIGINT`. El timestamp actual del servidor. El cliente debe guardarlo.
+-   `updates`: `Object`. Contiene todos los registros que han cambiado en el servidor desde el `lastSyncTimestamp` del cliente.
+-   `conflicts`: `Array`. Notifica conflictos resueltos por el servidor ("last write wins"). El cliente debe usarlo para notificaciones no bloqueantes.
+-   `errors`: `Array`. Registros que el servidor rechazó. El cliente debe marcarlos con `syncStatus: 'error'` y notificar al usuario para corrección manual.
+
+---
+
+## 4. Estructura de Datos (Resumen con Nuevos Campos)
+
+A continuación se presenta un resumen de las tablas con los campos de sincronización acordados. Los identificadores (`id`) serán generados por el cliente mediante `crypto.randomUUID()`. Los timestamps se manejarán como `BIGINT` (milisegundos UTC).
+
+-   **`employees`**: `id`, `name`, `rut`, `position`, `area`, `isActive`, **`lastModified`**, **`isDeleted`**, **`syncStatus`**, **`syncError`**.
+    -   **Nota de Integridad:** La lógica de borrado suave (`softDeleteEmployee`) en el cliente actualmente previene el archivado si el empleado tiene registros de horario o turnos asignados. El backend debería implementar una validación similar para mantener la integridad referencial.
+
+-   **`users`**: `id`, `username`, `password` (hash), `role`, `employeeId`, **`lastModified`**, **`isDeleted`**, **`syncStatus`**, **`syncError`**.
+-   **`daily_time_records`**: `id`, `employeeId`, `date`, `entrada`, `salida`, `entradaTimestamp`, `salidaTimestamp`, **`lastModified`**, **`isDeleted`**, **`syncStatus`**, **`syncError`**.
+-   **`theoretical_shift_patterns`**: `id`, `name`, `cycleLengthDays`, `color`, `maxHoursPattern`, `dailySchedules` (JSON/TEXT), **`lastModified`**, **`isDeleted`**, **`syncStatus`**, **`syncError`**.
+-   **`assigned_shifts`**: `id`, `employeeId`, `shiftPatternId`, `startDate`, `endDate`, **`lastModified`**, **`isDeleted`**, **`syncStatus`**, **`syncError`**.
+-   **`shift_reports`**: `id`, `folio`, `date`, `shiftName`, `responsibleUser`, `startTime`, `endTime`, `status`, `logEntries` (JSON/TEXT), `supplierEntries` (JSON/TEXT), **`lastModified`**, **`isDeleted`**, **`syncStatus`**, **`syncError`**.
+-   **`app_settings`**: `id`, `value` (JSON/TEXT), **`lastModified`**, **`isDeleted`**, **`syncStatus`**, **`syncError`**. (El `id` será el nombre de la configuración, ej. `globalMaxWeeklyHours`).
+-   **`audit_logs`**: Tabla de solo escritura del cliente al servidor. No requiere sincronización bidireccional. `id`, `timestamp`, `actorUsername`, `action`, `details`. El cliente puede usar `syncStatus` internamente para saber cuáles enviar.
+
+---
+
+## 5. Flujo de Errores y Conflictos del Lado del Cliente
+
+Este es un apéndice para clarificar cómo el cliente maneja las respuestas no exitosas del endpoint `/api/sync`.
+
+-   **Conflictos (`conflicts` array):**
+    -   El cliente **no** modifica el registro local. Asume que la versión del servidor (que ganó) se recibirá en el array `updates` si hubo cambios.
+    -   El cliente muestra una notificación no intrusiva (un "toast") al usuario informando del conflicto resuelto, ej: "Registro 'X' actualizado con la versión del servidor."
+
+-   **Errores (`errors` array):**
+    -   El cliente busca el registro local por el `clientRecordId` proporcionado.
+    -   Actualiza el estado del registro a `syncStatus: 'error'`.
+    -   Guarda el `message` del error en el campo `syncError` del registro local.
+    -   **No se reintenta automáticamente.**
+    -   La UI indicará que hay errores de sincronización. Un modal mostrará una lista de los registros fallidos y sus mensajes de `syncError` para que el usuario pueda entender el problema y corregir los datos manualmente antes de que el registro pueda ser incluido en una futura sincronización.
+
+---
+
+## 6. Notas de Desarrollador para Pruebas (Developer Notes for Testing)
+
+Para facilitar la depuración y las pruebas de integración, se han añadido herramientas específicas en el cliente.
+
+-   **Panel de Desarrollador:** La aplicación cliente ahora incluye un panel de desarrollador, accesible solo para usuarios con el rol de 'Administrador'. Este panel proporciona estadísticas en tiempo real sobre el estado de la sincronización.
+-   **Simulación de Errores:**
+    -   El panel contiene un botón para **"Simular Error de Sincronización"**.
+    -   Al hacer clic, se crea un nuevo registro de empleado con un nombre que incluye la cadena "Test User Error".
+    -   **Sugerencia para el Backend:** Para probar el flujo de errores de extremo a extremo, el backend puede implementar una regla de validación simple que rechace cualquier registro de la tabla `employees` cuyo campo `name` contenga la subcadena "Error". Esto permitirá verificar que el cliente maneja correctamente la respuesta de error del servidor.

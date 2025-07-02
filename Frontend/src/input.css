@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  Este es tu archivo de estilos personalizados.
+  Puedes agregar tus propias clases CSS aquí.
+  Estas clases estarán disponibles en toda tu aplicación.
+
+  Ejemplo:
+  .mi-gradiente-personalizado {
+    background-image: linear-gradient(to right, var(--tw-gradient-stops));
+    --tw-gradient-from: #4facfe;
+    --tw-gradient-to: #00f2fe;
+    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
+  }
+*/
+/* Agrega un desplazamiento suave para toda la página */
+html {
+  scroll-behavior: smooth;
+}
