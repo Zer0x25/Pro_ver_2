@@ -19,6 +19,16 @@ const ToastItem: React.FC<ToastItemProps> = ({ toast, onDismiss }) => {
     }
   }, [id, duration, onDismiss]);
 
+  useEffect(() => {
+    if (type === 'warning') {
+      const audio = new Audio('imagens/notif.mp3');
+      audio.play().catch(e => console.error("Error playing warning sound:", e));
+    } else if (type === 'error') {
+      const audio = new Audio('imagens/error.mp3');
+      audio.play().catch(e => console.error("Error playing error sound:", e));
+    }
+  }, [type, id]);
+
   const IconComponent = useMemo(() => {
     switch (type) {
       case 'success':

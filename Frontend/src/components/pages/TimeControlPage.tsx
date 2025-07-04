@@ -1,57 +1,33 @@
+
+
+
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { DailyTimeRecord, Employee, ShiftReport } from '../../types';
+import { DailyTimeRecord, Employee, ShiftReport, LogbookEntryItem } from '../../types';
 import { useEmployees } from '../../contexts/EmployeeContext';
 import { useAuth } from '../../hooks/useAuth'; 
 import { useLogs } from '../../hooks/useLogs';   
 import { useToasts } from '../../hooks/useToasts';
-import { useTimeRecords } from '../../hooks/useTimeRecords'; // Import the new hook
-import { ROUTES } from '../../constants';
+import { useTimeRecords } from '../../hooks/useTimeRecords';
+import { ROUTES, STORAGE_KEYS } from '../../constants';
 import { exportToCSV, exportToExcel, exportToPDF } from '../../utils/exportUtils';
+import { formatDisplayDateTime, formatDateToDateTimeLocal, formatTime } from '../../utils/formatters';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
 import Card from '../ui/Card';
 import ConfirmationModal from '../ui/ConfirmationModal';
+import AddNoveltyModal from '../ui/AddNoveltyModal';
 import { 
-  FilterIcon, 
   ChevronDownIcon, ExportIcon, CloseIcon, EditIcon, DeleteIcon, ExclamationTriangleIcon,
-  TableCellsIcon, DocumentTextIcon, DocumentArrowDownIcon
+  TableCellsIcon, DocumentTextIcon, DocumentArrowDownIcon, ChatBubbleLeftRightIcon
 } from '../ui/icons';
 import { useUsers } from '../../hooks/useUsers';
-import { idbGetAll, STORES } from '../../utils/indexedDB';
+import { idbGetAll, idbPut, STORES } from '../../utils/indexedDB';
+import { useTheoreticalShifts } from '../../hooks/useTheoreticalShifts';
 
-const CLOCK_FORMAT_KEY = 'timecontrol-clockformat'; 
+const CLOCK_FORMAT_KEY = STORAGE_KEYS.TIME_CONTROL_CLOCK_FORMAT; 
 const THREE_MINUTES_IN_MS = 3 * 60 * 1000;
 const RECORDS_PER_PAGE = 40;
-
-const formatDateToDateTimeLocal = (date: Date): string => {
-  const year = date.getFullYear();
-  const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const day = date.getDate().toString().padStart(2, '0');
-  const hours = date.getHours().toString().padStart(2, '0');
-  const minutes = date.getMinutes().toString().padStart(2, '0');
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
-};
-
-const formatDisplayDateTime = (isoDateTimeString?: string | "SIN REGISTRO"): string => {
-  if (!isoDateTimeString) return '-';
-  if (isoDateTimeString === "SIN REGISTRO") return "Sin Registro";
-  try {
-    // Explicitly ensure primitive string for new Date()
-    const date = new Date(String(isoDateTimeString)); 
-    if (isNaN(date.getTime())) return '-'; 
-    const day = date.getDate().toString().padStart(2, '0');
-    const month = (date.getMonth() + 1).toString().padStart(2, '0');
-    const year = date.getFullYear();
-    const hours = date.getHours().toString().padStart(2, '0');
-    const minutes = date.getMinutes().toString().padStart(2, '0');
-    return `${day}/${month}/${year} ${hours}:${minutes}`;
-  } catch (e) {
-    console.error("Error formatting date:", isoDateTimeString, e);
-    return '-';
-  }
-};
-
 
 const TimeControlPage: React.FC = () => {
   const navigate = useNavigate();
@@ -60,8 +36,9 @@ const TimeControlPage: React.FC = () => {
   const { currentUser } = useAuth(); 
   const { addLog } = useLogs();     
   const { addToast } = useToasts(); 
-  const { dailyRecords, isLoadingRecords, addOrUpdateRecord, deleteRecordById } = useTimeRecords();
+  const { dailyRecords, isLoadingRecords, addOrUpdateRecord, deleteRecordById, allRecordsLoaded, loadAllRecords } = useTimeRecords();
   const { users } = useUsers();
+  const { getEmployeeDailyScheduleInfo } = useTheoreticalShifts();
 
   const [currentDateTime, setCurrentDateTime] = useState(new Date());
   const [searchTerm, setSearchTerm] = useState('');
@@ -75,6 +52,7 @@ const TimeControlPage: React.FC = () => {
     hasta: searchParams.get('date') || '' 
   });
   const [manualFilterActive, setManualFilterActive] = useState(false);
+  const [isLoadingFullHistory, setIsLoadingFullHistory] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
 
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
@@ -88,6 +66,10 @@ const TimeControlPage: React.FC = () => {
   });
   
   const actorUsername = currentUser?.username || 'System';
+
+  // Role-based restrictions
+  const isSupervisorRole = currentUser?.role === 'Supervisor';
+  const supervisorDisabledTooltip = "Los supervisores tienen acceso de solo lectura.";
 
   // State for missed clock-out (entrada sin salida) confirmation
   const [showMissedClockOutConfirmation, setShowMissedClockOutConfirmation] = useState(false);
@@ -106,6 +88,11 @@ const TimeControlPage: React.FC = () => {
   const [showResponsibleUserClockOutConfirmation, setShowResponsibleUserClockOutConfirmation] = useState(false);
   const [employeeToConfirmClockOut, setEmployeeToConfirmClockOut] = useState<Employee | null>(null);
 
+  // State for the new novelty modal
+  const [isAddNoveltyModalOpen, setIsAddNoveltyModalOpen] = useState(false);
+  const [noveltyInitialText, setNoveltyInitialText] = useState('');
+  const [activeShiftForNovelty, setActiveShiftForNovelty] = useState<ShiftReport | null>(null);
+
 
   useEffect(() => {
     const fetchReports = async () => {
@@ -120,28 +107,36 @@ const TimeControlPage: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const filterEmployeeName = searchParams.get('employeeName');
-    const filterDate = searchParams.get('date');
+    const applyUrlParams = async () => {
+        const filterEmployeeName = searchParams.get('employeeName');
+        const filterDate = searchParams.get('date');
 
-    if (filterEmployeeName && filterDate) {
-        setIsFiltersVisible(true);
-        setManualFilterActive(true);
-        setCurrentPage(1);
+        if (filterEmployeeName && filterDate) {
+            if (!allRecordsLoaded) {
+                setIsLoadingFullHistory(true);
+                await loadAllRecords();
+                setIsLoadingFullHistory(false);
+            }
+            setIsFiltersVisible(true);
+            setManualFilterActive(true);
+            setCurrentPage(1);
 
-        setFilters({
-            name: filterEmployeeName,
-            area: '',
-            desde: filterDate,
-            hasta: filterDate,
-        });
+            setFilters({
+                name: filterEmployeeName,
+                area: '',
+                desde: filterDate,
+                hasta: filterDate,
+            });
 
-        // Clean up the URL search params after applying them
-        const newSearchParams = new URLSearchParams(searchParams);
-        newSearchParams.delete('employeeName');
-        newSearchParams.delete('date');
-        setSearchParams(newSearchParams, { replace: true });
-    }
-  }, [searchParams, setSearchParams]);
+            // Clean up the URL search params after applying them
+            const newSearchParams = new URLSearchParams(searchParams);
+            newSearchParams.delete('employeeName');
+            newSearchParams.delete('date');
+            setSearchParams(newSearchParams, { replace: true });
+        }
+    };
+    applyUrlParams();
+  }, [searchParams, setSearchParams, allRecordsLoaded, loadAllRecords]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -181,6 +176,57 @@ const TimeControlPage: React.FC = () => {
         setSelectedEmployeeId(emp.id);
     }
   }
+
+  const handleAddComment = async (record: DailyTimeRecord) => {
+    const allShifts = await idbGetAll<ShiftReport>(STORES.SHIFT_REPORTS);
+    const activeShift = allShifts.find(s => s.status === 'open');
+
+    if (!activeShift) {
+        addToast("No hay un turno activo para agregar una novedad.", "warning");
+        return;
+    }
+    setActiveShiftForNovelty(activeShift);
+
+    const timeToUse = record.entrada && record.entrada !== 'SIN REGISTRO' ? record.entrada : record.salida;
+    const formattedTime = formatDisplayDateTime(timeToUse);
+    const prefilledText = `Novedad sobre ${record.employeeName} (Registro del ${formattedTime}):\n`;
+    
+    setNoveltyInitialText(prefilledText);
+    setIsAddNoveltyModalOpen(true);
+  };
+
+  const handleSaveNovelty = async (annotation: string, time: string) => {
+    if (!activeShiftForNovelty || !currentUser) {
+        addToast("Error: no se encontró un turno activo o usuario.", "error");
+        return;
+    }
+
+    const newEntry: LogbookEntryItem = {
+      id: crypto.randomUUID(),
+      time,
+      annotation,
+      timestamp: new Date().getTime(),
+    };
+    
+    const updatedLogEntries = [...activeShiftForNovelty.logEntries, newEntry].sort((a,b) => a.timestamp - b.timestamp);
+    const updatedShift: ShiftReport = { 
+        ...activeShiftForNovelty, 
+        logEntries: updatedLogEntries, 
+        lastModified: Date.now(), 
+        syncStatus: 'pending' 
+    };
+
+    try {
+      await idbPut<ShiftReport>(STORES.SHIFT_REPORTS, updatedShift);
+      addToast("Novedad agregada al turno activo.", "success");
+      await addLog(currentUser.username, 'Log Entry Added from Time Control', { shiftFolio: activeShiftForNovelty.folio, annotation: newEntry.annotation.substring(0, 50) });
+      setIsAddNoveltyModalOpen(false);
+    } catch (error) {
+        addToast("Error al guardar la novedad.", "error");
+        console.error("Error saving novelty from Time Control:", error);
+        await addLog(currentUser.username, 'Log Entry Add Failed from Time Control', { shiftFolio: activeShiftForNovelty.folio, error: String(error) });
+    }
+  };
 
   const processNewClockIn = async (employee: Employee) => {
     const now = new Date();
@@ -253,7 +299,7 @@ const TimeControlPage: React.FC = () => {
   };
 
   const handleCancelNewClockIn = () => {
-    addToast("Nueva entrada cancelada. Por favor, registre la salida de la entrada anterior o edítela manually.", 'info', 7000);
+    addToast("Nueva entrada cancelada. Por favor, registre la salida de la entrada anterior o edítela manualmente.", 'info', 7000);
     setShowMissedClockOutConfirmation(false);
     setPendingClockInDetails(null);
   };
@@ -347,7 +393,7 @@ const TimeControlPage: React.FC = () => {
         setSearchTerm('');
         setSelectedEmployeeId(null);
         // Set flag for auto close
-        sessionStorage.setItem('triggerAutoCloseShift', 'true');
+        sessionStorage.setItem(STORAGE_KEYS.TRIGGER_AUTO_CLOSE_SHIFT, 'true');
         navigate(ROUTES.LOGBOOK);
     } else {
         await addLog(actorUsername, 'Clock Out DB Error (Shift Responsible)', {
@@ -444,6 +490,44 @@ const TimeControlPage: React.FC = () => {
             recordId: recordToSave.id,
             recordedTime: currentFullDateTime
         });
+        
+        // --- Early Departure Check ---
+        const allShifts = await idbGetAll<ShiftReport>(STORES.SHIFT_REPORTS);
+        const activeShift = allShifts.find(s => s.status === 'open');
+        if (activeShift && latestOpenEntryForEmployee.entradaTimestamp) {
+            const clockInDate = new Date(latestOpenEntryForEmployee.entradaTimestamp);
+            const scheduleInfo = getEmployeeDailyScheduleInfo(employee.id, clockInDate);
+            if (scheduleInfo?.isWorkDay && scheduleInfo.endTime) {
+                const [endHour, endMinute] = scheduleInfo.endTime.split(':').map(Number);
+                const scheduledEndTime = new Date(clockInDate.getFullYear(), clockInDate.getMonth(), clockInDate.getDate(), endHour, endMinute);
+                if (scheduledEndTime < clockInDate) {
+                    scheduledEndTime.setDate(scheduledEndTime.getDate() + 1);
+                }
+
+                const timeDifferenceMs = scheduledEndTime.getTime() - now.getTime();
+                const FIFTEEN_MINUTES_IN_MS = 15 * 60 * 1000;
+                
+                if (timeDifferenceMs > FIFTEEN_MINUTES_IN_MS) {
+                    const noveltyAnnotation = `Empleado ${employee.name} se retira antes de su horario de salida (registro automatico)`;
+                    const newNovelty: LogbookEntryItem = {
+                        id: crypto.randomUUID(),
+                        time: formatTime(now),
+                        annotation: noveltyAnnotation,
+                        timestamp: now.getTime(),
+                    };
+                    const updatedShift: ShiftReport = {
+                        ...activeShift,
+                        logEntries: [...activeShift.logEntries, newNovelty].sort((a, b) => a.timestamp - b.timestamp),
+                        lastModified: Date.now(),
+                        syncStatus: 'pending',
+                    };
+                    await idbPut<ShiftReport>(STORES.SHIFT_REPORTS, updatedShift);
+                    addToast("Novedad automática registrada por retiro anticipado.", 'info');
+                }
+            }
+        }
+        // --- End Early Departure Check ---
+
         setSearchTerm('');
         setSelectedEmployeeId(null);
       } else {
@@ -457,7 +541,12 @@ const TimeControlPage: React.FC = () => {
     }
   };
 
-  const handleFilterChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const handleFilterChange = async (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    if (!allRecordsLoaded) {
+        setIsLoadingFullHistory(true);
+        await loadAllRecords();
+        setIsLoadingFullHistory(false);
+    }
     setManualFilterActive(true);
     setCurrentPage(1);
     setFilters(prev => ({ ...prev, [e.target.name]: e.target.value }));
@@ -509,7 +598,13 @@ const TimeControlPage: React.FC = () => {
   
   const totalPages = Math.ceil(filteredRecords.length / RECORDS_PER_PAGE);
 
-  const handleExport = (format: 'csv' | 'excel' | 'pdf') => {
+  const handleExport = async (format: 'csv' | 'excel' | 'pdf') => {
+    if (!allRecordsLoaded) {
+      setIsLoadingFullHistory(true);
+      await loadAllRecords();
+      setIsLoadingFullHistory(false);
+    }
+    
     if (filteredRecords.length === 0) {
       addToast("No hay datos para exportar.", "info");
       return;
@@ -687,11 +782,13 @@ const TimeControlPage: React.FC = () => {
               <Input
                 type="search"
                 id="busquedaEmpleado"
-                placeholder="Buscar empleado por nombre..."
+                placeholder={isSupervisorRole ? "Búsqueda deshabilitada para supervisores" : "Buscar empleado por nombre..."}
                 aria-label="Buscar empleado"
                 autoComplete="off"
                 value={searchTerm}
                 onChange={handleSearchChange}
+                disabled={isSupervisorRole}
+                title={isSupervisorRole ? supervisorDisabledTooltip : undefined}
               />
                {searchTerm && !selectedEmployeeId && (
                 <div className="max-h-32 overflow-y-auto border rounded p-1 border-sap-border dark:border-gray-600 bg-white dark:bg-gray-700">
@@ -703,8 +800,8 @@ const TimeControlPage: React.FC = () => {
                 </div>
               )}
               <div className="flex space-x-2 justify-center">
-                <Button onClick={() => handleRecordAction('entrada')} className="flex-1 bg-green-500 hover:bg-green-600 dark:bg-green-600 dark:hover:bg-green-500">Entrada</Button>
-                <Button onClick={() => handleRecordAction('salida')} className="flex-1 bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-500">Salida</Button>
+                <Button onClick={() => handleRecordAction('entrada')} className="flex-1 bg-green-500 hover:bg-green-600 dark:bg-green-600 dark:hover:bg-green-500" disabled={isSupervisorRole} title={isSupervisorRole ? supervisorDisabledTooltip : undefined}>Entrada</Button>
+                <Button onClick={() => handleRecordAction('salida')} className="flex-1 bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-500" disabled={isSupervisorRole} title={isSupervisorRole ? supervisorDisabledTooltip : undefined}>Salida</Button>
               </div>
             </div>
             <div className="space-y-2 text-center md:text-right">
@@ -733,7 +830,7 @@ const TimeControlPage: React.FC = () => {
           {isFiltersVisible && (
             <Card className="mt-2"> 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-                <Input label="Nombre" name="name" value={filters.name} onChange={handleFilterChange} />
+                <Input label="Nombre" name="name" value={filters.name} onChange={(e) => handleFilterChange(e)} />
                 <div>
                   <label htmlFor="filtroArea" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Área:</label>
                   <select 
@@ -747,8 +844,8 @@ const TimeControlPage: React.FC = () => {
                     {uniqueAreas.map((area: string) => <option key={area} value={area}>{area}</option>)}
                   </select>
                 </div>
-                <Input label="Desde (Fecha Principal)" name="desde" type="date" value={filters.desde} onChange={handleFilterChange} />
-                <Input label="Hasta (Fecha Principal)" name="hasta" type="date" value={filters.hasta} onChange={handleFilterChange} />
+                <Input label="Desde (Fecha Principal)" name="desde" type="date" value={filters.desde} onChange={(e) => handleFilterChange(e)} />
+                <Input label="Hasta (Fecha Principal)" name="hasta" type="date" value={filters.hasta} onChange={(e) => handleFilterChange(e)} />
               </div>
               <div className="flex space-x-2">
                 <Button onClick={clearFilters} variant="secondary">Limpiar Filtros</Button>
@@ -785,6 +882,11 @@ const TimeControlPage: React.FC = () => {
             </div>
           </div>
           <div className="overflow-x-auto">
+            {isLoadingFullHistory && (
+              <div className="flex justify-center items-center p-4">
+                <p className="dark:text-gray-300">Cargando historial completo...</p>
+              </div>
+            )}
             <table className="min-w-full divide-y divide-sap-border dark:divide-gray-700">
               <thead className="bg-gray-50 dark:bg-gray-700">
                 <tr>
@@ -797,20 +899,50 @@ const TimeControlPage: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="bg-white dark:bg-gray-800 divide-sap-border dark:divide-gray-700">
-                {recordsToDisplay.length > 0 ? recordsToDisplay.map(record => (
-                  <tr key={record.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
-                    <td className="px-4 py-2 whitespace-nowrap text-sm hidden sm:table-cell">{record.employeeArea}</td>
-                    <td className="px-4 py-2 whitespace-nowrap text-sm">{record.employeeName}</td>
-                    <td className="px-4 py-2 whitespace-nowrap text-sm hidden sm:table-cell">{record.employeePosition}</td>
-                    <td className="px-4 py-2 whitespace-nowrap text-sm">{formatDisplayDateTime(record.entrada)}</td>
-                    <td className="px-4 py-2 whitespace-nowrap text-sm">{formatDisplayDateTime(record.salida)}</td>
-                    <td className="px-4 py-2 whitespace-nowrap text-sm space-x-1">
-                      <Button size="sm" onClick={() => openEditModal(record.id, 'entrada')} title="Editar Entrada" className="p-1"> <EditIcon /> </Button>
-                      <Button size="sm" onClick={() => openEditModal(record.id, 'salida')} title="Editar Salida" className="p-1"> <EditIcon /> </Button>
-                      <Button size="sm" variant="danger" onClick={() => handleDeleteRecord(record.id)} title="Eliminar Registro" className="p-1"> <DeleteIcon /> </Button>
-                    </td>
-                  </tr>
-                )) : (
+                {recordsToDisplay.length > 0 ? recordsToDisplay.map(record => {
+                  const now = Date.now();
+                  const TWENTY_FOUR_HOURS_IN_MS = 24 * 60 * 60 * 1000;
+                  const recordTimestamp = Math.max(record.entradaTimestamp || 0, record.salidaTimestamp || 0);
+                  const isOlderThan24h = recordTimestamp > 0 && (now - recordTimestamp) > TWENTY_FOUR_HOURS_IN_MS;
+                  const isUsuarioRole = currentUser?.role === 'Usuario';
+                  
+                  const isActionDisabledForUsuario = isUsuarioRole && isOlderThan24h;
+                  const isActionDisabledForSupervisor = isSupervisorRole;
+                  const isActionDisabled = isActionDisabledForUsuario || isActionDisabledForSupervisor;
+
+                  let disabledTooltip = "";
+                  if (isActionDisabledForSupervisor) {
+                      disabledTooltip = supervisorDisabledTooltip;
+                  } else if (isActionDisabledForUsuario) {
+                      disabledTooltip = "No se pueden modificar registros con más de 24 horas de antigüedad.";
+                  }
+
+                  return (
+                    <tr key={record.id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+                      <td className="px-4 py-2 whitespace-nowrap text-sm hidden sm:table-cell">{record.employeeArea}</td>
+                      <td className="px-4 py-2 whitespace-nowrap text-sm">{record.employeeName}</td>
+                      <td className="px-4 py-2 whitespace-nowrap text-sm hidden sm:table-cell">{record.employeePosition}</td>
+                      <td className="px-4 py-2 whitespace-nowrap text-sm">{formatDisplayDateTime(record.entrada)}</td>
+                      <td className="px-4 py-2 whitespace-nowrap text-sm">{formatDisplayDateTime(record.salida)}</td>
+                      <td className="px-4 py-2 whitespace-nowrap text-sm space-x-1">
+                        <span title={isActionDisabled ? disabledTooltip : "Editar Entrada"}>
+                            <Button size="sm" onClick={() => openEditModal(record.id, 'entrada')} className="p-1" disabled={isActionDisabled}> <EditIcon /> </Button>
+                        </span>
+                        <span title={isActionDisabled ? disabledTooltip : "Editar Salida"}>
+                            <Button size="sm" onClick={() => openEditModal(record.id, 'salida')} className="p-1" disabled={isActionDisabled}> <EditIcon /> </Button>
+                        </span>
+                        <span title={isActionDisabled ? disabledTooltip : "Agregar Comentario/Novedad"}>
+                            <Button size="sm" variant="secondary" onClick={() => handleAddComment(record)} className="p-1" disabled={isActionDisabled}>
+                                <ChatBubbleLeftRightIcon className="w-5 h-5" />
+                            </Button>
+                        </span>
+                        <span title={isActionDisabled ? disabledTooltip : "Eliminar Registro"}>
+                            <Button size="sm" variant="danger" onClick={() => handleDeleteRecord(record.id)} className="p-1" disabled={isActionDisabled}> <DeleteIcon /> </Button>
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                }) : (
                   <tr>
                     <td colSpan={6} className="px-4 py-4 text-center text-sm">{manualFilterActive ? 'No hay registros que coincidan con su filtro.' : 'No hay registros en las últimas 20 horas.'}</td>
                   </tr>
@@ -879,6 +1011,14 @@ const TimeControlPage: React.FC = () => {
           confirmVariant="danger"
         />
       )}
+      
+      <AddNoveltyModal
+        isOpen={isAddNoveltyModalOpen}
+        onClose={() => setIsAddNoveltyModalOpen(false)}
+        onSave={handleSaveNovelty}
+        initialText={noveltyInitialText}
+        isEditing={false}
+      />
 
       {showMissedClockOutConfirmation && pendingClockInDetails && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70 p-4" role="dialog" aria-modal="true" aria-labelledby="missed-clockout-title">

@@ -1,10 +1,13 @@
+
+
+
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShiftReport, LogbookEntryItem, SupplierEntry, User, DailyTimeRecord } from '../../types';
 import { useAuth } from '../../hooks/useAuth';
 import { useLogs } from '../../hooks/useLogs';
 import { useToasts } from '../../hooks/useToasts';
-import { ROUTES } from '../../constants';
+import { ROUTES, STORAGE_KEYS } from '../../constants';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
 import Card from '../ui/Card';
@@ -15,25 +18,15 @@ import { useTheoreticalShifts } from '../../hooks/useTheoreticalShifts';
 import { useTimeRecords } from '../../hooks/useTimeRecords';
 import { useEmployees } from '../../contexts/EmployeeContext';
 import { useUsers } from '../../hooks/useUsers';
-
-const formatTime = (date: Date): string => {
-  return date.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit', hour12: false });
-};
+import { formatTime, formatDateToDateTimeLocal } from '../../utils/formatters';
+import AddNoveltyModal from '../ui/AddNoveltyModal';
+import ShiftReportModal from '../ui/ShiftReportModal';
 
 const formatDateYYYYMMDD = (date: Date): string => {
   const year = date.getFullYear();
   const month = (date.getMonth() + 1).toString().padStart(2, '0');
   const day = date.getDate().toString().padStart(2, '0');
   return `${year}-${month}-${day}`;
-};
-
-const formatDateToDateTimeLocal = (date: Date): string => {
-  const year = date.getFullYear();
-  const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const day = date.getDate().toString().padStart(2, '0');
-  const hours = date.getHours().toString().padStart(2, '0');
-  const minutes = date.getMinutes().toString().padStart(2, '0');
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
 };
 
 const REPORTS_PER_PAGE = 10;
@@ -63,8 +56,6 @@ const LogbookPage: React.FC = () => {
 
   const [newShiftName, setNewShiftName] = useState('DÍA'); 
   
-  const [logEntryAnnotation, setLogEntryAnnotation] = useState('');
-  const [logEntryTime, setLogEntryTime] = useState<string>(formatTime(new Date()));
   const [editingLogEntry, setEditingLogEntry] = useState<LogbookEntryItem | null>(null);
 
   const [supplierData, setSupplierData] = useState<Omit<SupplierEntry, 'id' | 'time' | 'timestamp'>>({
@@ -185,9 +176,9 @@ const LogbookPage: React.FC = () => {
   }, [activeShift, activeShiftId, addLog, addToast, currentUser]);
   
   useEffect(() => {
-    const autoClose = sessionStorage.getItem('triggerAutoCloseShift');
+    const autoClose = sessionStorage.getItem(STORAGE_KEYS.TRIGGER_AUTO_CLOSE_SHIFT);
     if (autoClose === 'true' && activeShift) {
-        sessionStorage.removeItem('triggerAutoCloseShift');
+        sessionStorage.removeItem(STORAGE_KEYS.TRIGGER_AUTO_CLOSE_SHIFT);
         executeCloseShift();
     }
   }, [activeShift, executeCloseShift]);
@@ -305,17 +296,17 @@ const LogbookPage: React.FC = () => {
     }
   };
 
-  const saveLogEntry = async () => {
-    if (!logEntryAnnotation.trim() || !activeShiftId || !activeShift || !logEntryTime.trim() || !currentUser) {
-        addToast("La hora y la anotación son requeridas.", "warning");
+  const saveLogEntry = async (annotation: string, time: string) => {
+    if (!activeShiftId || !activeShift || !currentUser) {
+        addToast("No se puede guardar porque no hay un turno activo.", "warning");
         return;
     }
     const actor = currentUser.username;
     const now = new Date();
     const newEntry: LogbookEntryItem = {
       id: editingLogEntry ? editingLogEntry.id : now.getTime().toString(),
-      time: logEntryTime,
-      annotation: logEntryAnnotation,
+      time: time,
+      annotation: annotation,
       timestamp: editingLogEntry ? editingLogEntry.timestamp : now.getTime(),
     };
 
@@ -336,24 +327,17 @@ const LogbookPage: React.FC = () => {
         await addLog(actor, 'Log Entry Added', { shiftFolio: activeShift.folio, entryId: newEntry.id, annotation: newEntry.annotation.substring(0, 50) });
       }
       setShowLogEntryModal(false);
-      setLogEntryAnnotation('');
-      setLogEntryTime(formatTime(new Date()));
       setEditingLogEntry(null);
     } catch (error) {
         console.error("Error saving log entry in IndexedDB:", error);
         addToast("Error al guardar la novedad.", "error");
-        if (editingLogEntry) { 
-            await addLog(actor, 'Log Entry Edit Failed', { shiftFolio: activeShift.folio, error: String(error) });
-        } else {
-            await addLog(actor, 'Log Entry Add Failed', { shiftFolio: activeShift.folio, error: String(error) });
-        }
+        const logAction = editingLogEntry ? 'Log Entry Edit Failed' : 'Log Entry Add Failed';
+        await addLog(actor, logAction, { shiftFolio: activeShift.folio, error: String(error) });
     }
   };
   
   const openEditLogEntryModal = (entry: LogbookEntryItem) => {
     setEditingLogEntry(entry);
-    setLogEntryAnnotation(entry.annotation);
-    setLogEntryTime(entry.time);
     setShowLogEntryModal(true);
   };
 
@@ -542,7 +526,7 @@ const LogbookPage: React.FC = () => {
         
           <Card title="Registro de Novedades">
             <div className="flex items-center mb-3">
-              <Button onClick={() => { setEditingLogEntry(null); setLogEntryAnnotation(''); setLogEntryTime(formatTime(new Date())); setShowLogEntryModal(true);}} size="sm" className="flex items-center">
+              <Button onClick={() => { setEditingLogEntry(null); setShowLogEntryModal(true); }} size="sm" className="flex items-center">
                 <PlusCircleIcon className="w-5 h-5 mr-1" /> Agregar Novedad
               </Button>
             </div>
@@ -646,21 +630,17 @@ const LogbookPage: React.FC = () => {
         </div>
       )}
 
-      {renderModal(showLogEntryModal, () => {setShowLogEntryModal(false); setEditingLogEntry(null); setLogEntryAnnotation(''); setLogEntryTime(formatTime(new Date()));}, editingLogEntry ? "Editar Novedad" : "Agregar Novedad",
-        <form onSubmit={(e) => { e.preventDefault(); saveLogEntry();}} className="space-y-4">
-          <Input 
-            label="Hora" 
-            type="time" 
-            id="logEntryTime" 
-            value={logEntryTime} 
-            onChange={e => setLogEntryTime(e.target.value)} 
-            required 
-          />
-          <label htmlFor="logAnnotationTextarea" className="block text-sm font-medium mb-1 text-gray-700 dark:text-gray-300">Detalle de la novedad</label>
-          <textarea id="logAnnotationTextarea" value={logEntryAnnotation} onChange={e => setLogEntryAnnotation(e.target.value)} rows={4} placeholder="Detalle de la novedad..." className="block w-full px-3 py-2 border border-sap-border dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-sap-blue focus:border-sap-blue dark:focus:ring-sap-light-blue dark:focus:border-sap-light-blue sm:text-sm" required/>
-          <Button type="submit" disabled={!logEntryAnnotation.trim() || !logEntryTime.trim()}>{editingLogEntry ? "Actualizar Novedad" : "Guardar Novedad"}</Button>
-        </form>
-      )}
+      <AddNoveltyModal
+        isOpen={showLogEntryModal}
+        onClose={() => {
+            setShowLogEntryModal(false);
+            setEditingLogEntry(null);
+        }}
+        onSave={saveLogEntry}
+        initialText={editingLogEntry ? editingLogEntry.annotation : ''}
+        initialTime={editingLogEntry ? editingLogEntry.time : undefined}
+        isEditing={!!editingLogEntry}
+      />
       
       {renderModal(showSupplierEntryModal, () => {setShowSupplierEntryModal(false); setEditingSupplierEntry(null); setSupplierData({ licensePlate: '', driverName: '', paxCount: 0, company: '', reason: '' }); setSupplierEntryTime(formatTime(new Date()));}, editingSupplierEntry ? "Editar Ingreso Proveedor" : "Registrar Ingreso Proveedor",
         <form onSubmit={(e) => { e.preventDefault(); saveSupplierEntry();}} className="space-y-3">
@@ -744,42 +724,6 @@ const LogbookPage: React.FC = () => {
           )}
         </div>
       )}
-
-      {showReportDetailsModal && renderModal(!!showReportDetailsModal, () => {
-        setShowReportDetailsModal(null)
-      }, `Detalle Turno: ${showReportDetailsModal.folio}`,
-        <div className="max-h-[80vh] overflow-y-auto space-y-4">
-          <div>
-            <h4 className="font-semibold text-lg mb-1 text-gray-900 dark:text-gray-100">Información General</h4>
-            <p><strong>Folio:</strong> {showReportDetailsModal.folio}</p>
-            <p><strong>Fecha:</strong> {new Date(showReportDetailsModal.date + 'T00:00:00').toLocaleDateString('es-CL')}</p>
-            <p><strong>Turno:</strong> {showReportDetailsModal.shiftName}</p>
-            <p><strong>Responsable:</strong> {getResponsibleDisplayName(showReportDetailsModal.responsibleUser)}</p>
-            <p><strong>Inicio:</strong> {new Date(showReportDetailsModal.startTime).toLocaleString('es-CL')}</p>
-            <p><strong>Cierre:</strong> {showReportDetailsModal.endTime ? new Date(showReportDetailsModal.endTime).toLocaleString('es-CL') : 'N/A'}</p>
-          </div>
-          <div>
-            <h4 className="font-semibold text-lg mt-3 mb-1 text-gray-900 dark:text-gray-100">Novedades Registradas ({showReportDetailsModal.logEntries.length})</h4>
-            {showReportDetailsModal.logEntries.length > 0 ? (
-              <ul className="list-disc pl-5 space-y-1 text-sm">
-                {showReportDetailsModal.logEntries.map(le => <li key={le.id}><strong>{le.time}:</strong> {le.annotation}</li>)}
-              </ul>
-            ) : <p className="text-sm">Ninguna.</p>}
-          </div>
-           <div>
-            <h4 className="font-semibold text-lg mt-3 mb-1 text-gray-900 dark:text-gray-100">Ingresos de Proveedores ({showReportDetailsModal.supplierEntries.length})</h4>
-            {showReportDetailsModal.supplierEntries.length > 0 ? (
-              <ul className="space-y-1 text-sm">
-                {showReportDetailsModal.supplierEntries.map(se => (
-                  <li key={se.id} className="border-b pb-1 mb-1 border-gray-200 dark:border-gray-700">
-                    <strong>{se.time}</strong> - {se.company} (Cond: {se.driverName}, Pat: {se.licensePlate}, Pax: {se.paxCount}). Motivo: {se.reason}
-                  </li>
-                ))}
-              </ul>
-            ) : <p className="text-sm">Ninguno.</p>}
-          </div>
-        </div>
-      )}
       
       {renderModal(showCloseShiftConfirmation, () => setShowCloseShiftConfirmation(false), "Confirmar Cierre de Turno",
         <div className="space-y-4">
@@ -811,6 +755,12 @@ const LogbookPage: React.FC = () => {
             </div>
         </div>
       )}
+
+      <ShiftReportModal
+        isOpen={!!showReportDetailsModal}
+        onClose={() => setShowReportDetailsModal(null)}
+        report={showReportDetailsModal}
+      />
     </div>
   );
 };

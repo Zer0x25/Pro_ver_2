@@ -28,7 +28,10 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, requiredRoles
   // Updated logic to check against an array of roles
   if (requiredRoles && requiredRoles.length > 0 && (!currentUser || !requiredRoles.includes(currentUser.role))) {
     console.warn(`Access denied. User role ${currentUser?.role} is not in the required roles list [${requiredRoles.join(', ')}].`);
-    return <Navigate to={ROUTES.DASHBOARD} replace />; 
+    
+    // Smart redirect based on role to prevent loops
+    const defaultRoute = currentUser?.role === 'Supervisor' ? ROUTES.SUPERVISOR_DASHBOARD : ROUTES.DASHBOARD;
+    return <Navigate to={defaultRoute} replace />; 
   }
 
   return <>{children}</>;

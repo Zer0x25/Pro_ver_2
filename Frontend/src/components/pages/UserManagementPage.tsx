@@ -8,17 +8,15 @@ import Button from '../ui/Button';
 import Input from '../ui/Input';
 import ConfirmationModal from '../ui/ConfirmationModal';
 import { PlusCircleIcon, EditIcon, DeleteIcon } from '../ui/icons';
-import { useTheoreticalShifts } from '../../hooks/useTheoreticalShifts';
 
-const USER_ROLES: UserRole[] = ['Usuario', 'Supervisor', 'Administrador'];
+const USER_ROLES: UserRole[] = ['Usuario', 'Supervisor', 'Usuario Elevado', 'Administrador'];
 const USERS_PER_PAGE = 10;
 
 const UserManagementPage: React.FC = () => {
   const { users, isLoadingUsers, addUser, updateUser, deleteUser } = useUsers();
-  const { activeEmployees, employees, isLoadingEmployees: isLoadingEmps } = useEmployees();
+  const { activeEmployees, isLoadingEmployees: isLoadingEmps } = useEmployees();
   const { addToast } = useToasts();
   const { currentUser } = useAuth(); 
-  const { globalMaxWeeklyHours, updateGlobalMaxWeeklyHours, isLoadingShifts, areaList, updateAreaList } = useTheoreticalShifts();
 
   const [isFormVisible, setIsFormVisible] = useState(false);
   
@@ -32,11 +30,7 @@ const UserManagementPage: React.FC = () => {
   
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-
-  const [maxWeeklyHoursInputValue, setMaxWeeklyHoursInputValue] = useState<string>('');
-  const [newAreaName, setNewAreaName] = useState('');
-  const [areaToDelete, setAreaToDelete] = useState<string | null>(null);
-
+  
   const actorUsername = useMemo(() => currentUser?.username || 'System', [currentUser]);
 
   const cardHeaderClass = "px-4 py-3 bg-gray-50 dark:bg-gray-700/50 border-b border-sap-border dark:border-gray-600 flex justify-between items-center";
@@ -74,12 +68,6 @@ const UserManagementPage: React.FC = () => {
         setEditingUser(null);
     }
   }, [isFormVisible]);
-
-  useEffect(() => {
-    if (!isLoadingShifts) {
-      setMaxWeeklyHoursInputValue(String(globalMaxWeeklyHours));
-    }
-  }, [globalMaxWeeklyHours, isLoadingShifts]);
 
   const handleCancel = () => {
     setIsFormVisible(false);
@@ -184,46 +172,8 @@ const UserManagementPage: React.FC = () => {
     return Math.ceil(filteredUsers.length / USERS_PER_PAGE);
   }, [filteredUsers.length]);
 
-  const handleSaveGlobalMaxHours = async () => {
-    const newMaxHours = parseInt(maxWeeklyHoursInputValue, 10);
-    if (isNaN(newMaxHours) || newMaxHours <= 0 || newMaxHours > 168) {
-        addToast("Por favor, ingrese un número válido de horas (ej. 1-168).", "error");
-        return;
-    }
-    await updateGlobalMaxWeeklyHours(newMaxHours, actorUsername);
-  };
 
-  const handleAddArea = async () => {
-    const trimmedArea = newAreaName.trim();
-    if (!trimmedArea) {
-      addToast("El nombre del área no puede estar vacío.", "warning");
-      return;
-    }
-    if (areaList.some(area => area.toLowerCase() === trimmedArea.toLowerCase())) {
-      addToast("El área ya existe.", "warning");
-      return;
-    }
-    const newAreaList = [...areaList, trimmedArea];
-    await updateAreaList(newAreaList, actorUsername);
-    setNewAreaName('');
-  };
-
-  const handleDeleteArea = (area: string) => {
-    const isUsed = employees.some(emp => emp.area === area);
-    if (isUsed) {
-      addToast("No se puede eliminar. El área está en uso por uno o más empleados.", "error");
-      return;
-    }
-    setAreaToDelete(area);
-  };
-  
-  const handleConfirmDeleteArea = async () => {
-    if (!areaToDelete) return;
-    const newAreaList = areaList.filter(area => area !== areaToDelete);
-    await updateAreaList(newAreaList, actorUsername);
-  };
-
-  if (isLoadingUsers || isLoadingShifts || isLoadingEmps) {
+  if (isLoadingUsers || isLoadingEmps) {
     return <div className="p-6 text-center dark:text-gray-200">Cargando datos de administración...</div>;
   }
 
@@ -356,62 +306,6 @@ const UserManagementPage: React.FC = () => {
         </div>
       </div>
       
-      <div className={cardContainerClass}>
-        <div className={cardHeaderClass}>
-            <h3 className="text-lg font-medium leading-6 text-sap-dark-gray dark:text-gray-100">
-                Variables Globales
-            </h3>
-        </div>
-        <div className={`${cardBodyClass} grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6`}>
-            <div className="space-y-4">
-              <h4 className="text-base font-semibold text-gray-700 dark:text-gray-200">Horas Semanales</h4>
-              <Input
-                label="Máximas por Ley"
-                id="globalMaxWeeklyHours"
-                type="number"
-                value={maxWeeklyHoursInputValue}
-                onChange={(e) => setMaxWeeklyHoursInputValue(e.target.value)}
-                min="1"
-                max="168"
-              />
-              <Button onClick={handleSaveGlobalMaxHours} variant="primary">
-                Guardar Horas Máximas
-              </Button>
-            </div>
-            <div className="space-y-4">
-              <h4 className="text-base font-semibold text-gray-700 dark:text-gray-200">Gestionar Lista de Áreas</h4>
-              <div className="flex items-end gap-2">
-                <Input
-                  label="Nueva Área"
-                  id="newAreaName"
-                  value={newAreaName}
-                  onChange={(e) => setNewAreaName(e.target.value)}
-                  placeholder="Ej: Logística"
-                />
-                <Button onClick={handleAddArea} className="shrink-0">
-                  <PlusCircleIcon className="w-5 h-5"/>
-                </Button>
-              </div>
-              <div className="mt-2 border rounded-md dark:border-gray-600 max-h-48 overflow-y-auto">
-                {areaList.length > 0 ? (
-                  <ul className="divide-y dark:divide-gray-600">
-                    {areaList.map(area => (
-                      <li key={area} className="flex justify-between items-center p-2 text-sm">
-                        <span className="text-gray-800 dark:text-gray-200">{area}</span>
-                        <Button size="sm" variant="danger" className="p-1" onClick={() => handleDeleteArea(area)}>
-                          <DeleteIcon className="w-4 h-4" />
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="p-4 text-center text-sm text-gray-500 dark:text-gray-400">No hay áreas definidas.</p>
-                )}
-              </div>
-            </div>
-        </div>
-      </div>
-
       {userToDelete && (
           <ConfirmationModal
               isOpen={!!userToDelete}
@@ -420,17 +314,6 @@ const UserManagementPage: React.FC = () => {
               title="Confirmar Eliminación de Usuario"
               message={`¿Está seguro de eliminar al usuario '${userToDelete.username}'? Esta acción es irreversible.`}
               confirmText="Eliminar Usuario"
-              confirmVariant="danger"
-          />
-      )}
-      {areaToDelete && (
-          <ConfirmationModal
-              isOpen={!!areaToDelete}
-              onClose={() => setAreaToDelete(null)}
-              onConfirm={handleConfirmDeleteArea}
-              title="Confirmar Eliminación de Área"
-              message={`¿Está seguro de que desea eliminar el área '${areaToDelete}'?`}
-              confirmText="Eliminar Área"
               confirmVariant="danger"
           />
       )}

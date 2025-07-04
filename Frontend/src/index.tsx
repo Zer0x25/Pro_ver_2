@@ -9,6 +9,9 @@ import { ToastProvider } from './contexts/ToastContext';
 import { UserProvider } from './contexts/UserContext'; 
 import { TheoreticalShiftProvider } from './contexts/TheoreticalShiftContext';
 import { SyncProvider } from './contexts/SyncContext'; // Import SyncProvider
+import { QuickNotesProvider } from './contexts/QuickNotesContext';
+import { MeterReadingsProvider } from './contexts/MeterReadingsContext';
+import { TimeRecordProvider } from './contexts/TimeRecordContext';
 import { HashRouter } from 'react-router-dom';
 import './input.css';
 
@@ -28,9 +31,15 @@ root.render(
               <SyncProvider> {/* SyncProvider needs Auth details */}
                 <EmployeeProvider>
                   <TheoreticalShiftProvider>
-                    <ThemeProvider>
-                      <App />
-                    </ThemeProvider>
+                    <QuickNotesProvider>
+                      <MeterReadingsProvider>
+                        <TimeRecordProvider>
+                          <ThemeProvider>
+                            <App />
+                          </ThemeProvider>
+                        </TimeRecordProvider>
+                      </MeterReadingsProvider>
+                    </QuickNotesProvider>
                   </TheoreticalShiftProvider>
                 </EmployeeProvider>
               </SyncProvider>
@@ -48,4 +57,6 @@ root.render(
 // - AuthProvider (needed by SyncProvider and most of the app)
 // - SyncProvider (needs auth, provides sync services to children)
 // - EmployeeProvider & TheoreticalShiftProvider (core data contexts)
+// - QuickNotesProvider & MeterReadingsProvider (feature-specific data)
+// - TimeRecordProvider (manages time clocking data efficiently)
 // - ThemeProvider (general UI)

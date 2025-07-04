@@ -1,6 +1,8 @@
-import React, { createContext, useState, useEffect, ReactNode, useCallback } from 'react';
+
+
+import React, { createContext, useState, useCallback, ReactNode } from 'react';
 import { AuditLog, LogContextType } from '../types';
-import { STORES, idbGetAll, idbPut, idbDelete } from '../utils/indexedDB'; // idbDelete will be used for clearing logs
+import { STORES, idbGetAll, idbPut, getDBInstance } from '../utils/indexedDB'; 
 
 export const LogContext = createContext<LogContextType | undefined>(undefined);
 
@@ -10,23 +12,21 @@ interface LogProviderProps {
 
 export const LogProvider: React.FC<LogProviderProps> = ({ children }) => {
   const [logs, setLogs] = useState<AuditLog[]>([]);
-  const [isLoadingLogs, setIsLoadingLogs] = useState<boolean>(true);
+  const [isLoadingLogs, setIsLoadingLogs] = useState<boolean>(false); // Default to false
 
-  useEffect(() => {
-    const loadLogs = async () => {
-      setIsLoadingLogs(true);
-      try {
-        const storedLogs = await idbGetAll<AuditLog>(STORES.AUDIT_LOGS);
-        // Sort by timestamp descending to show newest first
-        setLogs(storedLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
-      } catch (error) {
-        console.error("Error loading audit logs from IndexedDB:", error);
-      } finally {
-        setIsLoadingLogs(false);
-      }
-    };
-    loadLogs();
-  }, []);
+  const loadLogs = useCallback(async () => {
+    if (isLoadingLogs) return; // Prevent concurrent loads
+    setIsLoadingLogs(true);
+    try {
+      const storedLogs = await idbGetAll<AuditLog>(STORES.AUDIT_LOGS);
+      setLogs(storedLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
+    } catch (error) {
+      console.error("Error loading audit logs from IndexedDB:", error);
+    } finally {
+      setIsLoadingLogs(false);
+    }
+  }, [isLoadingLogs]);
+
 
   const addLog = useCallback(async (actorUsername: string, action: string, details?: Record<string, any>): Promise<void> => {
     const timestamp = new Date().toISOString();
@@ -42,29 +42,29 @@ export const LogProvider: React.FC<LogProviderProps> = ({ children }) => {
     };
     try {
       await idbPut<AuditLog>(STORES.AUDIT_LOGS, newLog);
-      setLogs(prevLogs => [newLog, ...prevLogs].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())); // Add to start and re-sort
+      // Only update state if logs have been loaded previously to avoid inconsistent states
+      setLogs(prevLogs => {
+        if (prevLogs.length > 0 || isLoadingLogs) {
+          return [newLog, ...prevLogs].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        }
+        return prevLogs; // Return previous state if not modifying
+      });
     } catch (error) {
       console.error("Error adding log to IndexedDB:", error);
     }
-  }, []);
+  }, [isLoadingLogs]);
 
   const clearAllLogs = useCallback(async (): Promise<void> => {
     // Confirmation is handled by the caller (ConfigurationPage)
     setIsLoadingLogs(true);
     try {
-      const allLogs = await idbGetAll<AuditLog>(STORES.AUDIT_LOGS);
-      const { getDBInstance } = await import('../utils/indexedDB'); 
       const db = await getDBInstance();
       const tx = db.transaction(STORES.AUDIT_LOGS, 'readwrite');
-      for (const log of allLogs) {
-        tx.store.delete(log.id);
-      }
+      await tx.store.clear(); // Much more efficient than deleting one by one
       await tx.done;
       setLogs([]);
-      // Toast notifications for success/failure will be handled by the calling component (ConfigurationPage)
     } catch (error) {
       console.error("Error clearing audit logs from IndexedDB:", error);
-      // Re-throw the error so the caller can handle it (e.g., show a toast)
       throw error; 
     } finally {
       setIsLoadingLogs(false);
@@ -72,7 +72,7 @@ export const LogProvider: React.FC<LogProviderProps> = ({ children }) => {
   }, []);
 
   return (
-    <LogContext.Provider value={{ logs, isLoadingLogs, addLog, clearAllLogs }}>
+    <LogContext.Provider value={{ logs, isLoadingLogs, addLog, clearAllLogs, loadLogs }}>
       {children}
     </LogContext.Provider>
   );

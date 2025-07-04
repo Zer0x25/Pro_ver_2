@@ -1,6 +1,9 @@
+
+
+
 import { Dispatch, SetStateAction } from 'react';
 
-export type UserRole = 'Usuario' | 'Supervisor' | 'Administrador';
+export type UserRole = 'Usuario' | 'Supervisor' | 'Administrador' | 'Usuario Elevado';
 
 export interface Syncable {
   lastModified: number; // Unix timestamp in ms
@@ -15,15 +18,6 @@ export interface User extends Syncable {
   password?: string; // Optional because hardcoded admin might not have it from DB
   role: UserRole;
   employeeId?: string; // Link to an Employee record
-}
-
-export interface TimeEntry {
-  id: string;
-  date: string;
-  startTime: string;
-  endTime: string;
-  description?: string;
-  duration: string; // Calculated, e.g., "2h 30m"
 }
 
 export interface Employee extends Syncable {
@@ -121,6 +115,7 @@ export interface LogContextType {
   isLoadingLogs: boolean;
   addLog: (actorUsername: string, action: string, details?: Record<string, any>) => Promise<void>;
   clearAllLogs: () => Promise<void>;
+  loadLogs: () => Promise<void>; // Added for deferred loading
 }
 
 // User Management types
@@ -149,6 +144,7 @@ export interface TheoreticalShiftPattern extends Syncable {
   id: string; // UUID
   name: string;
   cycleLengthDays: number; // e.g., 7 for weekly, 14 for bi-weekly
+  startDayOfWeek?: number; // 1 for Monday, 7 for Sunday. Optional for backward compatibility.
   dailySchedules: DayInCycleSchedule[]; // Array defining schedule for each day in the cycle
   color?: string; // Optional hex color string for the pattern
   maxHoursPattern?: number; // Optional pattern-specific max weekly hours
@@ -181,6 +177,8 @@ export interface EmployeeDailyScheduleInfo { // For single-employee calendar vie
   hours?: number;
   shiftPatternName?: string;
   patternColor?: string; // Color of the shift pattern
+  hasColacion?: boolean;
+  colacionMinutes?: number;
 }
 
 export interface EmployeeWithShiftDetails extends Employee {
@@ -197,10 +195,15 @@ export interface MonthlyDayScheduleView { // For list view by month
   isWorkDay: boolean;
 }
 
+export interface MeterConfig {
+  id: string;
+  label: string;
+}
 
 export interface TheoreticalShiftContextType {
   globalMaxWeeklyHours: number; 
   areaList: string[];
+  meterConfigs: MeterConfig[];
   shiftPatterns: TheoreticalShiftPattern[]; // Enriched with hours and color
   assignedShifts: AssignedShift[]; // Enriched with names
   isLoadingShifts: boolean;
@@ -234,6 +237,7 @@ export interface TheoreticalShiftContextType {
   getEmployeeDailyScheduleInfo: (employeeId: string, targetDate: Date) => EmployeeDailyScheduleInfo | null; // For single-employee detailed calendar view & list
   updateGlobalMaxWeeklyHours: (newMaxHours: number, actorUsername: string) => Promise<void>;
   updateAreaList: (newAreas: string[], actorUsername: string) => Promise<void>;
+  updateMeterConfigs: (newConfigs: MeterConfig[], actorUsername: string) => Promise<void>;
 }
 
 export type SyncState = 'idle' | 'syncing' | 'success' | 'error' | 'no-network';
@@ -244,4 +248,48 @@ export interface SyncContextType {
   conflicts: any[];
   runSync: () => Promise<void>;
   runBootstrap: () => Promise<void>;
+}
+
+// --- New Types for Dashboard Features ---
+
+export interface QuickNote extends Syncable {
+  id: string;
+  content: string;
+  authorUsername: string;
+  createdAt: number; // Unix timestamp
+}
+
+export interface QuickNotesContextType {
+  notes: QuickNote[];
+  isLoadingNotes: boolean;
+  addNote: (content: string) => Promise<QuickNote | null>;
+  deleteNote: (noteId: string) => Promise<boolean>;
+}
+
+export interface MeterReadingItem {
+  meterConfigId: string;
+  label: string;
+  value: number;
+}
+
+export interface MeterReading extends Syncable {
+  id: string; // UUID of the reading entry
+  timestamp: number; // Unix timestamp of when it was recorded
+  authorUsername: string;
+  readings: MeterReadingItem[];
+}
+
+export interface MeterReadingsContextType {
+    readings: MeterReading[];
+    isLoadingReadings: boolean;
+    addReading: (readings: Omit<MeterReadingItem, 'label'>[]) => Promise<MeterReading | null>;
+}
+
+export interface TimeRecordContextType {
+  dailyRecords: DailyTimeRecord[];
+  isLoadingRecords: boolean;
+  allRecordsLoaded: boolean; // To track if the full history is loaded
+  addOrUpdateRecord: (record: DailyTimeRecord) => Promise<boolean>;
+  deleteRecordById: (recordId: string) => Promise<boolean>;
+  loadAllRecords: () => Promise<void>; // Function to load the full history
 }

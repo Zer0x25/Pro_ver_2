@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect, ReactNode, useCallback, useContext, useMemo } from 'react';
+import React, { createContext, useState, useEffect, ReactNode, useCallback, useContext, useMemo, useRef } from 'react';
 import { Employee, EmployeeContextType, DailyTimeRecord, AssignedShift, Syncable } from '../types';
 import { idbGetAll, idbPut, getCounterValue, setCounterValue, STORES, COUNTER_IDS, idbDelete, idbGetAllBy } from '../utils/indexedDB';
 import { useLogs } from '../hooks/useLogs';
@@ -13,6 +13,8 @@ interface EmployeeProviderProps {
 
 export const EmployeeProvider: React.FC<EmployeeProviderProps> = ({ children }) => {
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const employeesRef = useRef(employees);
+  employeesRef.current = employees;
   const [isLoadingEmployees, setIsLoadingEmployees] = useState<boolean>(true);
   const { addLog } = useLogs();
   const { currentUser } = useAuth();
@@ -111,7 +113,7 @@ export const EmployeeProvider: React.FC<EmployeeProviderProps> = ({ children }) 
 
   const toggleEmployeeStatus = useCallback(async (employeeId: string): Promise<boolean> => {
     const actor = currentUser?.username || 'System';
-    const employeeToToggle = employees.find(emp => emp.id === employeeId);
+    const employeeToToggle = employeesRef.current.find(emp => emp.id === employeeId);
     if (!employeeToToggle) {
       addToast('Empleado no encontrado.', 'error');
       return false;
@@ -126,11 +128,11 @@ export const EmployeeProvider: React.FC<EmployeeProviderProps> = ({ children }) 
       addToast(`Empleado ${updatedEmployee.name} ${statusMessage}.`, 'success');
     }
     return success;
-  }, [employees, updateEmployee, addLog, addToast]);
+  }, [updateEmployee, addLog, addToast]);
 
   
   const softDeleteEmployee = useCallback(async (employeeId: string, actorUsername: string): Promise<boolean> => {
-    const employeeToDelete = employees.find(e => e.id === employeeId);
+    const employeeToDelete = employeesRef.current.find(e => e.id === employeeId);
     if (!employeeToDelete) {
         addToast("Empleado no encontrado para eliminar.", "error");
         return false;
@@ -156,11 +158,11 @@ export const EmployeeProvider: React.FC<EmployeeProviderProps> = ({ children }) 
         addToast(`Empleado '${employeeToDelete.name}' archivado.`, 'success');
     }
     return success;
-  }, [employees, updateEmployee, addLog, addToast]);
+  }, [updateEmployee, addLog, addToast]);
 
   const getEmployeeById = useCallback((employeeId: string): Employee | undefined => {
-    return employees.find(emp => emp.id === employeeId);
-  }, [employees]);
+    return employeesRef.current.find(emp => emp.id === employeeId);
+  }, []);
 
   return (
     <EmployeeContext.Provider value={{ 

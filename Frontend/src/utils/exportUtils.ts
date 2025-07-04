@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { ShiftReport } from '../types';
 
 const escapeCsvCell = (cell: any): string => {
     const stringCell = String(cell ?? '');
@@ -109,6 +110,92 @@ export const exportToPDF = (
             } catch (e) {
                 console.error("Error al imprimir:", e);
                 // Can't use addToast here as this is a util file
+                alert("Error al abrir la ventana de impresión.");
+                printWindow.close();
+            }
+        }, 500);
+    } else {
+        alert("No se pudo abrir la ventana de impresión. Verifique los bloqueadores de pop-ups.");
+    }
+};
+
+export const exportShiftReportToPDF = (report: ShiftReport, responsibleDisplayName: string) => {
+    const title = `Reporte de Turno: Folio ${report.folio}`;
+    
+    const generalInfoHtml = `
+        <h2>Información General</h2>
+        <p><strong>Folio:</strong> ${escapeHtml(report.folio)}</p>
+        <p><strong>Fecha:</strong> ${escapeHtml(new Date(report.date + 'T00:00:00').toLocaleDateString('es-CL'))}</p>
+        <p><strong>Turno:</strong> ${escapeHtml(report.shiftName)}</p>
+        <p><strong>Responsable:</strong> ${escapeHtml(responsibleDisplayName)}</p>
+        <p><strong>Inicio:</strong> ${escapeHtml(new Date(report.startTime).toLocaleString('es-CL'))}</p>
+        <p><strong>Cierre:</strong> ${report.endTime ? escapeHtml(new Date(report.endTime).toLocaleString('es-CL')) : 'N/A'}</p>
+    `;
+
+    const noveltiesHtml = `
+        <h2>Novedades Registradas (${report.logEntries.length})</h2>
+        ${report.logEntries.length > 0 ? `
+            <ul>
+                ${report.logEntries.map(le => `<li><strong>${escapeHtml(le.time)}:</strong> ${escapeHtml(le.annotation)}</li>`).join('')}
+            </ul>
+        ` : '<p>Ninguna.</p>'}
+    `;
+
+    const suppliersHtml = `
+        <h2>Ingresos de Proveedores (${report.supplierEntries.length})</h2>
+        ${report.supplierEntries.length > 0 ? `
+            <ul>
+                ${report.supplierEntries.map(se => `
+                    <li class="supplier-entry">
+                        <strong>${escapeHtml(se.time)}</strong> - ${escapeHtml(se.company)} (Cond: ${escapeHtml(se.driverName)}, Pat: ${escapeHtml(se.licensePlate)}, Pax: ${escapeHtml(se.paxCount)}). Motivo: ${escapeHtml(se.reason)}
+                    </li>
+                `).join('')}
+            </ul>
+        ` : '<p>Ninguno.</p>'}
+    `;
+
+    const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>${escapeHtml(title)}</title>
+            <style>
+                @media print {
+                    @page { size: A4; margin: 25px; }
+                    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+                }
+                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; line-height: 1.5; color: #333; }
+                h1 { text-align: center; color: #005792; font-size: 1.5em; margin-bottom: 20px; }
+                h2 { font-size: 1.2em; color: #005792; border-bottom: 1px solid #dee2e6; padding-bottom: 5px; margin-top: 20px; }
+                p { margin: 5px 0; }
+                ul { list-style-type: disc; padding-left: 20px; margin: 0; }
+                li { margin-bottom: 5px; }
+                .supplier-entry { border-bottom: 1px dotted #ccc; padding-bottom: 5px; margin-bottom: 5px; list-style-type: none; }
+                .footer { text-align: center; font-size: 0.8em; color: #777; margin-top: 30px; border-top: 1px solid #ccc; padding-top: 10px; }
+            </style>
+        </head>
+        <body>
+            <h1>${escapeHtml(title)}</h1>
+            <div class="footer">Exportado el: ${new Date().toLocaleString('es-CL')}</div>
+            
+            ${generalInfoHtml}
+            ${noveltiesHtml}
+            ${suppliersHtml}
+        </body>
+        </html>
+    `;
+    
+     const printWindow = window.open('', '_blank');
+    if (printWindow) {
+        printWindow.document.write(htmlContent);
+        printWindow.document.close();
+        printWindow.focus();
+        setTimeout(() => {
+            try {
+                printWindow.print();
+                printWindow.onafterprint = () => printWindow.close();
+            } catch (e) {
+                console.error("Error al imprimir:", e);
                 alert("Error al abrir la ventana de impresión.");
                 printWindow.close();
             }

@@ -1,7 +1,8 @@
+
 import React, { createContext, useState, useEffect, ReactNode, useContext } from 'react';
 import { User } from '../types';
 import { useNavigate } from 'react-router-dom';
-import { ROUTES } from '../constants';
+import { ROUTES, STORAGE_KEYS } from '../constants';
 import { useLogs } from '../hooks/useLogs';
 import { UserContext } from './UserContext'; // Import UserContext to get users
 
@@ -35,7 +36,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // await new Promise(resolve => setTimeout(resolve, 50)); 
       if (!isMounted) return;
 
-      const storedUser = sessionStorage.getItem('currentUser');
+      const storedUser = sessionStorage.getItem(STORAGE_KEYS.CURRENT_USER);
       if (storedUser) {
         try {
           const parsedUser = JSON.parse(storedUser);
@@ -43,11 +44,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               setCurrentUser(parsedUser);
               setIsAuthenticated(true);
           } else {
-              sessionStorage.removeItem('currentUser'); // Clear invalid stored user
+              sessionStorage.removeItem(STORAGE_KEYS.CURRENT_USER); // Clear invalid stored user
           }
         } catch (error) {
             console.error("Error parsing stored user:", error);
-            sessionStorage.removeItem('currentUser');
+            sessionStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
         }
       }
       setIsAuthLoading(false); // Finished loading auth status
@@ -61,48 +62,54 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, []);
 
   const login = async (username: string, pass: string): Promise<boolean> => {
-    try {
-      const response = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password: pass })
-      });
-      if (!response.ok) {
-        await addLog(username, 'User Login Failed - Invalid Credentials (API)');
-        return false;
+    let potentialUser: User | undefined = undefined;
+
+    if (userContext && !userContext.isLoadingUsers) {
+      potentialUser = userContext.users.find(u => u.username === username);
+    }
+    
+    if (potentialUser && potentialUser.password === pass) {
+      setCurrentUser(potentialUser);
+      setIsAuthenticated(true);
+      sessionStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(potentialUser)); 
+      await addLog(username, 'User Login Success (DB)', { role: potentialUser.role });
+      
+      if (potentialUser.role === 'Supervisor') {
+        navigate(ROUTES.SUPERVISOR_DASHBOARD);
+      } else {
+        navigate(ROUTES.DASHBOARD);
       }
-      const data = await response.json();
-      const token = data.token;
-      // Decodificar el JWT para extraer info del usuario (opcional, si no viene en la respuesta)
-      // Aquí asumimos que el backend retorna el rol y username en el token
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      const user: User = {
-        id: payload.userId,
-        username: payload.username,
-        role: payload.role,
+      return true;
+    }
+
+    if (username === 'admin' && pass === 'password') {
+      const adminUser: User = { 
+        id: 'admin-special-001', 
+        username: 'admin', 
+        role: 'Administrador',
         lastModified: Date.now(),
         syncStatus: 'synced',
         isDeleted: false,
       };
-      setCurrentUser(user);
+      const adminUserForState = { ...adminUser, password: undefined }; 
+      setCurrentUser(adminUserForState);
       setIsAuthenticated(true);
-      sessionStorage.setItem('currentUser', JSON.stringify(user));
-      sessionStorage.setItem('authToken', token);
-      await addLog(username, 'User Login Success (API)', { role: user.role });
+      sessionStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(adminUserForState)); 
+      await addLog(username, 'User Login Success (Hardcoded Admin)');
       navigate(ROUTES.DASHBOARD);
       return true;
-    } catch (error) {
-      await addLog(username, 'User Login Failed - Network/API Error');
-      return false;
     }
+
+    await new Promise(resolve => setTimeout(resolve, 300)); 
+    await addLog(username, 'User Login Failed - Invalid Credentials');
+    return false;
   };
 
   const logout = () => {
     const username = currentUser?.username || 'Unknown User';
     setCurrentUser(null);
     setIsAuthenticated(false);
-    sessionStorage.removeItem('currentUser'); 
-    sessionStorage.removeItem('autoShiftCheckDone'); // Clean up auto-start flag on logout
+    sessionStorage.removeItem(STORAGE_KEYS.CURRENT_USER); 
     addLog(username, 'User Logout');
     navigate(ROUTES.LOGIN);
   };

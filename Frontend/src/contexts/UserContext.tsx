@@ -186,6 +186,7 @@ export const UserProvider: React.FC<UserProviderProps> = ({ children }) => {
     return users.find(u => u.id === userId);
   }, [users]);
 
+
   return (
     <UserContext.Provider value={{ 
       users, 

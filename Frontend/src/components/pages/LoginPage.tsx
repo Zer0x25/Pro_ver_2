@@ -6,7 +6,7 @@ import Input from '../ui/Input';
 import Card from '../ui/Card';
 import { APP_TITLE, ROUTES } from '../../constants';
 import { useNavigate } from 'react-router-dom';
-import { useSync } from '../../hooks/useSync';
+import LiberalitasSignature from '../LiberalitasSignature';
 
 const LoginPage: React.FC = () => {
   const [username, setUsername] = useState('');
@@ -15,7 +15,6 @@ const LoginPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const { login, isAuthenticated, isAuthLoading } = useAuth(); 
   const { addToast } = useToasts();
-  const { runBootstrap } = useSync();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -34,9 +33,10 @@ const LoginPage: React.FC = () => {
       const errorMessage = 'Usuario o contraseña inválidos. (Pista: adm/pass)';
       setError(errorMessage); 
       addToast(errorMessage, 'error');
+      const audio = new Audio('imagens/cuak.mp3');
+      audio.play().catch(e => console.error("Error playing sound:", e));
     } else {
-      await runBootstrap();
-      // Success toast can be omitido aquí si login function o navigation implica éxito
+      // Success toast can be omitted here if login function or navigation implies success
       // addToast(`Bienvenido ${username}!`, 'success'); 
     }
     setLoading(false);
@@ -58,7 +58,7 @@ const LoginPage: React.FC = () => {
         <div className="text-center mb-8">
           <img src="imagens/Mini_Zer0x.jpg" alt="Zer0x Logo" className="mx-auto mb-4 h-12"/>
           <h2 className="text-2xl font-bold text-sap-dark-gray dark:text-gray-100">{APP_TITLE}</h2>
-          <p className="text-sap-medium-gray dark:text-gray-400">Jaime O. Mella V.</p>
+          <LiberalitasSignature className="text-sap-medium-gray dark:text-gray-400" />
         </div>
         <form onSubmit={handleSubmit} className="space-y-6">
           <Input

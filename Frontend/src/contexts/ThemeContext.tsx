@@ -1,7 +1,10 @@
+
+
 import React, { createContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import { Theme, ThemeContextType } from '../types';
+import { STORAGE_KEYS } from '../constants';
 
-const THEME_STORAGE_KEY = 'app-theme';
+const THEME_STORAGE_KEY = STORAGE_KEYS.THEME;
 
 export const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 

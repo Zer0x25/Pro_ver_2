@@ -4,7 +4,12 @@ import { useTheoreticalShifts } from './useTheoreticalShifts';
 import { useAuth } from './useAuth';
 import { useToasts } from './useToasts';
 
-const DEFAULT_PATTERN_COLOR_FORM = '#E0E0E0'; 
+const PRESET_COLORS = [
+  '#F44336', '#E91E63', '#9C27B0', '#673AB7', '#3F51B5', 
+  '#2196F3', '#03A9F4', '#00BCD4', '#009688', '#4CAF50', 
+  '#8BC34A', '#CDDC39', '#FFEB3B', '#FFC107', '#FF9800', 
+  '#FF5722', '#795548', '#9E9E9E', '#607D8B'
+];
 
 const createInitialDailySchedules = (cycleLength: number): DayInCycleSchedule[] => {
   return Array.from({ length: cycleLength }, (_, i) => ({
@@ -34,10 +39,25 @@ export const useShiftPatternForm = () => {
     const [editingPattern, setEditingPattern] = useState<TheoreticalShiftPattern | null>(null);
     const [patternName, setPatternName] = useState('');
     const [patternCycleLength, setPatternCycleLengthState] = useState(7);
+    const [startDayOfWeek, setStartDayOfWeek] = useState(1); // 1 for Monday
     const [patternDailySchedules, setPatternDailySchedules] = useState<DayInCycleSchedule[]>(createInitialDailySchedules(7));
-    const [patternColor, setPatternColor] = useState(DEFAULT_PATTERN_COLOR_FORM);
+    const [patternColor, setPatternColor] = useState(PRESET_COLORS[0]);
     const [patternMaxHoursInput, setPatternMaxHoursInput] = useState<number>(globalMaxWeeklyHours);
     const [copiedDailySchedule, setCopiedDailySchedule] = useState<Omit<DayInCycleSchedule, 'dayIndex' | 'hours'> | null>(null);
+    
+    const getRandomColor = useCallback(() => {
+        const usedColors = new Set(shiftPatterns.map(p => p.color?.toUpperCase()).filter(Boolean));
+        const availableColors = PRESET_COLORS.filter(c => !usedColors.has(c.toUpperCase()));
+        
+        if (availableColors.length > 0) {
+            return availableColors[Math.floor(Math.random() * availableColors.length)];
+        } else if (shiftPatterns.length > 0) {
+            return PRESET_COLORS[Math.floor(Math.random() * PRESET_COLORS.length)];
+        } else {
+            return PRESET_COLORS[0];
+        }
+    }, [shiftPatterns]);
+
 
     const handleSetPatternCycleLength = useCallback((value: number) => {
         let cycleValue = value;
@@ -52,16 +72,18 @@ export const useShiftPatternForm = () => {
         setEditingPattern(null);
         setPatternName('');
         handleSetPatternCycleLength(7);
-        setPatternColor(DEFAULT_PATTERN_COLOR_FORM);
+        setPatternColor(getRandomColor());
         setPatternMaxHoursInput(globalMaxWeeklyHours);
         setPatternDailySchedules(createInitialDailySchedules(7));
-    }, [globalMaxWeeklyHours, handleSetPatternCycleLength]);
+        setStartDayOfWeek(1);
+    }, [globalMaxWeeklyHours, handleSetPatternCycleLength, getRandomColor]);
 
     const startCopyOfPattern = useCallback((patternToCopy: TheoreticalShiftPattern) => {
         setEditingPattern(null); // Ensure we're in "create" mode, not "edit"
         setPatternName(`${patternToCopy.name} - copia`);
         handleSetPatternCycleLength(patternToCopy.cycleLengthDays);
-        setPatternColor(patternToCopy.color || DEFAULT_PATTERN_COLOR_FORM);
+        setStartDayOfWeek(patternToCopy.startDayOfWeek || 1);
+        setPatternColor(patternToCopy.color || PRESET_COLORS[0]);
         setPatternMaxHoursInput(patternToCopy.maxHoursPattern || globalMaxWeeklyHours);
         
         const copiedSchedules = patternToCopy.dailySchedules.map(s => ({
@@ -82,7 +104,8 @@ export const useShiftPatternForm = () => {
         if (editingPattern) {
             setPatternName(editingPattern.name);
             handleSetPatternCycleLength(editingPattern.cycleLengthDays);
-            setPatternColor(editingPattern.color || DEFAULT_PATTERN_COLOR_FORM);
+            setStartDayOfWeek(editingPattern.startDayOfWeek || 1);
+            setPatternColor(editingPattern.color || PRESET_COLORS[0]);
             setPatternMaxHoursInput(editingPattern.maxHoursPattern || globalMaxWeeklyHours);
             setPatternDailySchedules(editingPattern.dailySchedules.map(s => ({
                 dayIndex: s.dayIndex,
@@ -96,7 +119,7 @@ export const useShiftPatternForm = () => {
         } else {
             // clearForm(); // Don't clear if a copy operation is in progress
         }
-    }, [editingPattern, calculateHoursBetween, globalMaxWeeklyHours, handleSetPatternCycleLength, clearForm]);
+    }, [editingPattern, calculateHoursBetween, globalMaxWeeklyHours, handleSetPatternCycleLength]);
 
     useEffect(() => {
         const newLength = Math.max(1, patternCycleLength);
@@ -203,6 +226,10 @@ export const useShiftPatternForm = () => {
             addToast("Max Hrs Semanales del Patrón debe ser un número positivo.", "warning");
             return false;
         }
+        if (patternMaxHoursInput > globalMaxWeeklyHours) {
+            addToast(`Las horas del patrón (${patternMaxHoursInput}) no pueden superar el máximo legal de ${globalMaxWeeklyHours} horas.`, "error", 6000);
+            return false;
+        }
 
         const trimmedNewName = patternName.trim().toLowerCase();
         const isDuplicate = shiftPatterns.some(
@@ -250,6 +277,7 @@ export const useShiftPatternForm = () => {
             dailySchedules: dataForContext,
             color: patternColor,
             maxHoursPattern: patternMaxHoursInput,
+            startDayOfWeek: startDayOfWeek,
         };
 
         let success = false;
@@ -283,6 +311,8 @@ export const useShiftPatternForm = () => {
         setPatternName,
         patternCycleLength,
         setPatternCycleLength: handleSetPatternCycleLength,
+        startDayOfWeek,
+        setStartDayOfWeek,
         patternDailySchedules,
         handleDailyScheduleChange,
         patternColor,

@@ -2,20 +2,22 @@
 @tailwind components;
 @tailwind utilities;
 
-/*
-  Este es tu archivo de estilos personalizados.
-  Puedes agregar tus propias clases CSS aquí.
-  Estas clases estarán disponibles en toda tu aplicación.
-
-  Ejemplo:
-  .mi-gradiente-personalizado {
-    background-image: linear-gradient(to right, var(--tw-gradient-stops));
-    --tw-gradient-from: #4facfe;
-    --tw-gradient-to: #00f2fe;
-    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to);
-  }
-*/
 /* Agrega un desplazamiento suave para toda la página */
 html {
   scroll-behavior: smooth;
+}
+/* Keyframes for blinking alerts */
+@keyframes blinker {
+  50% {
+    opacity: 0.2;
+  }
+}
+/* Blinker class to apply the animation */
+.blinker {
+  animation: blinker 1.5s linear infinite;
+}
+/* Custom extra-small text size for calendar */
+.text-xxs {
+  font-size: 0.65rem; /* 10.4px */
+  line-height: 0.85rem; /* 13.6px */
 }
